@@ -1,0 +1,9 @@
+decks/
+.vscode
+.mpypy_cache
+*.json
+debug*.png
+test*.png
+owned.txt
+purchased.txt
+to_purchase*.txt
