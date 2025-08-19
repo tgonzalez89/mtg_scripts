@@ -212,6 +212,10 @@ for idx, language in enumerate(all_languages):
     cards[language] = get_prices()
     print(f"cards[{language}]={cards[language]}")
 
+# If only one language, no need to choose language per card and optimize.
+if len(all_languages) == 1:
+    exit()
+
 # --- Step 12: Choose language by card ---
 def choose_languages(prices_by_lang, config):
     chosen_languages = {}
