@@ -10,6 +10,13 @@ card_list = """\
 PASTE CARD LIST HERE
 """
 
+expansion_choice = "Any"
+foil_choice = "Any"
+condition = "Slightly Played"
+# replace below to filter only the languages that you are interested
+all_languages = ["en", "es", "pt", "it"]
+language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25} # in cents
+
 
 driver = webdriver.Firefox()
 driver.get("https://www.cardtrader.com/wishlists/new")
@@ -87,8 +94,6 @@ def set_expansion(expn="Any"):
             pass
 
 
-set_expansion("Any")
-
 
 # --- Language dropdowns ---
 def set_language(lang="en"):
@@ -103,11 +108,10 @@ def set_language(lang="en"):
                 print(f"Warning: Couldn't select language '{lang}'.")
 
 
-set_language("en")
 
 
 # --- Condition dropdowns ---
-def set_condition(cond="Played"):
+def set_condition(cond=condition):
     condition_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="condition"]')
     for sel_elem in condition_selects:
         select = Select(sel_elem)
@@ -119,7 +123,6 @@ def set_condition(cond="Played"):
                 print(f"Warning: Couldn't select condition '{cond}'.")
 
 
-set_condition("Played")
 
 
 # --- Foil dropdowns ---
@@ -138,17 +141,18 @@ def set_foil(foil=""):
                 pass
 
 
-set_foil("Any")
 
-
-# --- Step 8: Click the "Optimize" button ---
-optimize_button = WebDriverWait(driver, 10).until(
-    EC.element_to_be_clickable(
-        (By.XPATH, "//button[contains(@class, 'btn') and contains(normalize-space(.), 'Optimize')]")
+# --- Step 8: Click the "Optimize"/"Refresh" button ---
+def click_button(button_name):
+    optimize_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//button[contains(@class, 'btn') and contains(normalize-space(.), {button_name})]")
+        )
     )
-)
-driver.execute_script("window.scrollTo(0, 0);")
-optimize_button.click()
+    driver.execute_script("window.scrollTo(0, 0);")
+    optimize_button.click()
+
+
 
 
 # --- Step 9: Wait until the optimizer is done ---
@@ -167,7 +171,6 @@ def wait_for_optimizer():
     actions.move_to_element(buy_now_link).perform()
 
 
-wait_for_optimizer()
 
 
 # --- Step 10: Get the prices ---
@@ -195,58 +198,21 @@ def get_prices():
     return cards
 
 
+# --- Step 11: Get the prices in all languages ---
+
 cards = {}
-cards["en"] = get_prices()
-print(f"{cards['en']=}")
 
-
-# --- STOP HERE IF YOU ONLY WANT CARDS IN ENGLISH ---
-# exit()
-
-
-# --- Step 11: Get the prices in other languages ---
-def click_refresh_button():
-    optimize_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//button[contains(@class, 'btn') and contains(normalize-space(.), 'Refresh')]")
-        )
-    )
-    driver.execute_script("window.scrollTo(0, 0);")
-    optimize_button.click()
-
-
-set_expansion("Any")
-set_language("es")
-set_condition("Played")
-set_foil("Any")
-click_refresh_button()
-wait_for_optimizer()
-cards["es"] = get_prices()
-print(f"{cards['es']=}")
-
-set_expansion("Any")
-set_language("pt")
-set_condition("Played")
-set_foil("Any")
-click_refresh_button()
-wait_for_optimizer()
-cards["pt"] = get_prices()
-print(f"{cards['pt']=}")
-
-set_expansion("Any")
-set_language("it")
-set_condition("Played")
-set_foil("Any")
-click_refresh_button()
-wait_for_optimizer()
-cards["it"] = get_prices()
-print(f"{cards['it']=}")
-
+for idx, language in enumerate(all_languages):
+    set_expansion(expansion_choice)
+    set_language(language)
+    set_condition(condition)
+    set_foil(foil_choice)
+    click_button("'Optimize'" if idx == 0 else "'Refresh'")
+    wait_for_optimizer()
+    cards[language] = get_prices()
+    print(f"cards[{language}]={cards[language]}")
 
 # --- Step 12: Choose language by card ---
-lang_config = {"en": 0, "es": 25, "pt": 25, "it": 25}
-
-
 def choose_languages(prices_by_lang, config):
     chosen_languages = {}
     languages = list(config.keys())
@@ -281,16 +247,15 @@ def choose_languages(prices_by_lang, config):
     return chosen_languages
 
 
-cards_chosen_lang = choose_languages(cards, lang_config)
+cards_chosen_lang = choose_languages(cards, language_change_price_thresholds)
 print(f"{cards_chosen_lang=}")
 
-print(f"Total in English    ({len(cards['en'])} cards): {sum(cards['en'].values())}")
-print(f"Total in Spanish    ({len(cards['es'])} cards): {sum(cards['es'].values())}")
-print(f"Total in Portuguese ({len(cards['pt'])} cards): {sum(cards['pt'].values())}")
-print(f"Total in Italian    ({len(cards['it'])} cards): {sum(cards['it'].values())}")
+for language  in all_languages:
+    print(f"Total in {language}    ({len(cards[language])} cards): {sum(cards[language].values())}")
+
 
 # --- Step 13: Optimize cards using the chosen language ---
-set_expansion("Any")
+set_expansion(expansion_choice)
 # Find all card rows with required attributes (same as before)
 card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
 for row in card_rows:
@@ -311,9 +276,9 @@ for row in card_rows:
             select.select_by_value(chosen_lang)
         except Exception:
             print(f"Error: Couldn't select the chosen language for card {repr(card_name)}. Selecting Any as fallback.")
-set_condition("Played")
-set_foil("Any")
-click_refresh_button()
+set_condition(condition)
+set_foil(foil_choice)
+click_button("'Refresh'")
 wait_for_optimizer()
 cards_optimized = get_prices()
 print(f"{cards_optimized=}")
