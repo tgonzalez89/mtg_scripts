@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def main():
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 3:
         print("Usage: python filter_list.py list.txt to_remove_from_list.txt")
         sys.exit(1)
 

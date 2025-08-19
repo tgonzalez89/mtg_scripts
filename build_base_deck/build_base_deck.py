@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pyedhrec
 
-commander_name = "Anim Pakal, Thousandth Moon"
+commander_name = "PASTE COMMANDER NAME HERE"
 vendor = "cardkingdom"
 synergy_threshold = 0.15
 inclusion_threshold = 0.25

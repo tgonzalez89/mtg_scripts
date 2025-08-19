@@ -7,32 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 card_list = """\
-Phyrexian Arena
-Lifegift
-Social Climber
-Nexus of Fate
-Polluted Bonds
-Pongify
-Campfire
-Deathrite Shaman
-Shifting Woodland
-Enduring Curiosity
-Mockingbird
-Unholy Annex // Ritual Chamber
-The Indomitable
-Toski, Bearer of Secrets
-Scute Swarm
-Wound Reflection
-Case of the Locked Hothouse
-Loot, Exuberant Explorer
-Tamiyo's Safekeeping
-Arcane Denial
-Entish Restoration
-Wayward Swordtooth
-Propaganda
-Ancient Cornucopia
-Zulaport Cutthroat
-Wizard Class
+PASTE CARD LIST HERE
 """
 
 
@@ -223,6 +198,10 @@ def get_prices():
 cards = {}
 cards["en"] = get_prices()
 print(f"{cards['en']=}")
+
+
+# --- STOP HERE IF YOU ONLY WANT CARDS IN ENGLISH ---
+# exit()
 
 
 # --- Step 11: Get the prices in other languages ---

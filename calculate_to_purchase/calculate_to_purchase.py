@@ -8,10 +8,9 @@ import httpx
 import requests
 
 buy_considering = True
-deck_ids = ("ey9UzE4YJEGX7jzS_Rr0pA", "LtNWOzHmEUittPxGYZUFxw", ("6kH8ejb2tkuN4E0ifJ_PAw", "IoAKn_wfLECpyorKx52ZvQ"))
-# deck_ids = ("ey9UzE4YJEGX7jzS_Rr0pA", "LtNWOzHmEUittPxGYZUFxw")
-# deck_ids = (("6kH8ejb2tkuN4E0ifJ_PAw", "IoAKn_wfLECpyorKx52ZvQ"),)
-
+deck_ids: tuple[str | tuple[str, ...], ...] = (
+    # PASTE MOXFIELD DECK IDS HERE
+)
 
 # Get purchased cards.
 # Populate the purchased.txt file.
@@ -29,7 +28,7 @@ for match in matches:
     card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
     purchased_cards[card_name] = purchased_cards.get(card_name, 0) + int(number)
 
-json.dump(purchased_cards, Path("purchased.json").open("w"), indent=2, sort_keys=True)
+# json.dump(purchased_cards, Path("purchased.json").open("w"), indent=2, sort_keys=True)
 
 # Get owned cards.
 # Populate the owned.txt file. Format: number of cards and card name.
@@ -45,51 +44,7 @@ for line in lines:
     card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
     owned_cards[card_name] = owned_cards.get(card_name, 0) + int(number)
 
-json.dump(owned_cards, Path("owned.json").open("w"), indent=2, sort_keys=True)
-
-# Get the required cards for each deck.
-# Populate the deck.txt files.
-#   1. Open the deck in Moxfield.
-#   2. Click on More > Export > Copy for Moxfield.
-#   3. Paste the contents into a text file and save it as deck.txt.
-#   4. The file should now contain the number of cards, the card name, the set id in parenthesis and the card id within the set.
-
-# decks: dict[str, int] = {}
-# for deck_file in Path(".").glob("*/deck.txt"):
-#     with deck_file.open() as f:
-#         lines = f.readlines()
-#     for line in lines:
-#         line = line.strip()
-#         if not line:
-#             continue
-#         number_and_card_name, _ = line.split(" (", maxsplit=1)
-#         number, card_name = number_and_card_name.split(" ", maxsplit=1)
-#         card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
-#         decks[card_name] = decks.get(card_name, 0) + int(number)
-
-# json.dump(decks, Path("decks.json").open("w"), indent=2, sort_keys=True)
-
-# Get the required cards in the considering category.
-# Populate the considering.txt file.
-#   1. Open the deck in Moxfield.
-#   2. Click on Bulk Edit > Considering and copy the contents.
-#   3. Paste the contents into a text file and save it as considering.txt.
-#   4. The file should now contain the number of cards, the card name, the set id in parenthesis, the card id within the set and the tags.
-
-# considering: dict[str, int] = {}
-# for deck_file in Path(".").glob("*/considering.txt"):
-#     with deck_file.open() as f:
-#         lines = f.readlines()
-#     for line in lines:
-#         line = line.strip()
-#         if not line:
-#             continue
-#         number_and_card_name, _ = line.split(" (", maxsplit=1)
-#         number, card_name = number_and_card_name.split(" ", maxsplit=1)
-#         card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
-#         considering[card_name] = considering.get(card_name, 0) + int(number)
-
-# json.dump(considering, Path("considering.json").open("w"), indent=2, sort_keys=True)
+# json.dump(owned_cards, Path("owned.json").open("w"), indent=2, sort_keys=True)
 
 
 def download_deck(deck_id) -> tuple[dict[str, int], dict[str, int]]:
@@ -103,8 +58,8 @@ def download_deck(deck_id) -> tuple[dict[str, int], dict[str, int]]:
             exit()
         encoding = response.headers.get_content_charset("utf-8")
         data = json.loads(response.read().decode(encoding))
-        with Path(deck_id + ".json").open("w") as fp:
-            json.dump(data, fp, indent=2, sort_keys=True)
+        # with Path(deck_id + ".json").open("w") as fp:
+        #     json.dump(data, fp, indent=2, sort_keys=True)
     if False:
         with httpx.Client(headers=headers) as http_client:
             response = http_client.head(moxfield_url + deck_id)
@@ -184,23 +139,42 @@ if buy_considering:
             need_all[card_name] = 1
             need_considering[card_name] = 1
 
-json.dump(need_all, Path("need_all.json").open("w"), indent=2, sort_keys=True)
+# json.dump(need_all, Path("need_all.json").open("w"), indent=2, sort_keys=True)
+json.dump(need_decks, Path("need_decks.json").open("w"), indent=2, sort_keys=True)
+json.dump(need_considering, Path("need_considering.json").open("w"), indent=2, sort_keys=True)
 
 # Calculate the cards that I need to buy.
 
 to_purchase = {}
+avoided = {}
+avoided_owned = {}
+avoided_purchased = {}
 for card_name, number in need_all.items():
     if card_name not in have:
         to_purchase[card_name] = number
+    elif number > have[card_name]:
+        to_purchase[card_name] = number - have[card_name]
+        avoided[card_name] = have[card_name]
+        if card_name in purchased_cards:
+            avoided_purchased[card_name] = purchased_cards[card_name]
+        if card_name in owned_cards:
+            avoided_owned[card_name] = owned_cards[card_name]
     else:
-        if have[card_name] < number:
-            to_purchase[card_name] = number - have[card_name]
+        avoided[card_name] = number
+        left = number
+        if card_name in purchased_cards:
+            avoided_purchased[card_name] = min(number, purchased_cards[card_name])
+        if card_name in owned_cards and number - avoided_purchased.get(card_name, 0) > 0:
+            avoided_owned[card_name] = number - avoided_purchased.get(card_name, 0)
 
 with Path("to_purchase.txt").open("w") as f:
     for card_name, number in sorted(to_purchase.items()):
         f.write(f"{number} {card_name}\n")
 
-json.dump(to_purchase, Path("to_purchase.json").open("w"), indent=2, sort_keys=True)
+# json.dump(to_purchase, Path("to_purchase.json").open("w"), indent=2, sort_keys=True)
+json.dump(avoided, Path("avoided.json").open("w"), indent=2, sort_keys=True)
+json.dump(avoided_owned, Path("avoided_owned.json").open("w"), indent=2, sort_keys=True)
+json.dump(avoided_purchased, Path("avoided_purchased.json").open("w"), indent=2, sort_keys=True)
 
 to_purchase_decks = {}
 for card_name, number in need_decks.items():
@@ -214,7 +188,7 @@ with Path("to_purchase_decks.txt").open("w") as f:
     for card_name, number in sorted(to_purchase_decks.items()):
         f.write(f"{number} {card_name}\n")
 
-json.dump(to_purchase_decks, Path("to_purchase_decks.json").open("w"), indent=2, sort_keys=True)
+# json.dump(to_purchase_decks, Path("to_purchase_decks.json").open("w"), indent=2, sort_keys=True)
 
 to_purchase_considering = {}
 for card_name, number in need_considering.items():
@@ -228,4 +202,4 @@ with Path("to_purchase_considering.txt").open("w") as f:
     for card_name, number in sorted(to_purchase_considering.items()):
         f.write(f"{number} {card_name}\n")
 
-json.dump(to_purchase_considering, Path("to_purchase_considering.json").open("w"), indent=2, sort_keys=True)
+# json.dump(to_purchase_considering, Path("to_purchase_considering.json").open("w"), indent=2, sort_keys=True)
