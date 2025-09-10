@@ -16,7 +16,7 @@ foil_choice = "Any"
 condition = "Slightly Played"
 # replace below to filter only the languages that you are interested
 all_languages = ["en", "es", "pt", "it"]
-language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25} # in cents
+language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25}  # in cents
 
 options = Options()
 """
@@ -26,7 +26,7 @@ Steps to Locate Your Firefox Profile Folder:
 3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
 4. Under that profile, find the "Root Directory" path.
 """
-options.set_preference("profile", r"C:\Users\<user>\AppData\Roaming\Waterfox\Profiles\<random_string>.default-release")
+options.set_preference("profile", r"C:\Users\tomas\AppData\Roaming\Waterfox\Profiles\e73d5vln.default-release")
 driver = webdriver.Firefox(options=options)
 driver.get("https://www.cardtrader.com/wishlists/new")
 
@@ -105,7 +105,6 @@ def set_expansion(expn="Any"):
             pass
 
 
-
 # --- Language dropdowns ---
 def set_language(lang="en"):
     language_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="language"]')
@@ -119,8 +118,6 @@ def set_language(lang="en"):
                 print(f"Warning: Couldn't select language '{lang}'.")
 
 
-
-
 # --- Condition dropdowns ---
 def set_condition(cond=condition):
     condition_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="condition"]')
@@ -132,8 +129,6 @@ def set_condition(cond=condition):
                 select.select_by_value(cond)
             except Exception:
                 print(f"Warning: Couldn't select condition '{cond}'.")
-
-
 
 
 # --- Foil dropdowns ---
@@ -152,7 +147,6 @@ def set_foil(foil=""):
                 pass
 
 
-
 # --- Step 8: Click the "Optimize"/"Refresh" button ---
 def click_button(button_name):
     optimize_button = WebDriverWait(driver, 10).until(
@@ -162,8 +156,6 @@ def click_button(button_name):
     )
     driver.execute_script("window.scrollTo(0, 0);")
     optimize_button.click()
-
-
 
 
 # --- Step 9: Wait until the optimizer is done ---
@@ -180,8 +172,6 @@ def wait_for_optimizer():
     WebDriverWait(driver, 300).until(lambda _: buy_now_link.get_attribute("disabled") is None)
     actions = ActionChains(driver)
     actions.move_to_element(buy_now_link).perform()
-
-
 
 
 # --- Step 10: Get the prices ---
@@ -227,6 +217,7 @@ for idx, language in enumerate(all_languages):
 if len(all_languages) == 1:
     exit()
 
+
 # --- Step 12: Choose language by card ---
 def choose_languages(prices_by_lang, config):
     chosen_languages = {}
@@ -265,7 +256,7 @@ def choose_languages(prices_by_lang, config):
 cards_chosen_lang = choose_languages(cards, language_change_price_thresholds)
 print(f"{cards_chosen_lang=}")
 
-for language  in all_languages:
+for language in all_languages:
     print(f"Total in {language}    ({len(cards[language])} cards): {sum(cards[language].values())}")
 
 
