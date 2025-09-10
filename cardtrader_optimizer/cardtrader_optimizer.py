@@ -3,6 +3,7 @@ import re
 from selenium import webdriver
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
@@ -17,9 +18,19 @@ condition = "Slightly Played"
 all_languages = ["en", "es", "pt", "it"]
 language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25} # in cents
 
-
-driver = webdriver.Firefox()
+options = Options()
+"""
+Steps to Locate Your Firefox Profile Folder:
+1. Open Firefox.
+2. In the address bar, type: about:profiles and press Enter.
+3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
+4. Under that profile, find the "Root Directory" path.
+"""
+options.set_preference("profile", r"C:\Users\<user>\AppData\Roaming\Waterfox\Profiles\<random_string>.default-release")
+driver = webdriver.Firefox(options=options)
 driver.get("https://www.cardtrader.com/wishlists/new")
+
+# CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
 
 # --- Step 0: Click the "Accept" button ---
 accept_button = WebDriverWait(driver, 10).until(
