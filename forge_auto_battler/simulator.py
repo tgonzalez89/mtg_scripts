@@ -469,55 +469,76 @@ def main():
         select_deck(decks[2], (player_3_coords[0] + deck_offset[0], player_3_coords[1] + deck_offset[1]))
         select_deck(decks[3], (player_4_coords[0] + deck_offset[0], player_4_coords[1] + deck_offset[1]))
 
-        # Start the match.
-        print(">> Starting the match.")
-        start_button_coords = (997, 975)
-        move_and_click(start_button_coords)
+        attempts_left = 3
+        while attempts_left:
+            # Start the match.
+            print(">> Starting the match.")
+            start_button_coords = (997, 975)
+            move_and_click(start_button_coords)
 
-        # Wait for the match to end.
-        print(">> Waiting for the match to end.")
-        window_width, window_height = window.client_rect().right, window.client_rect().bottom
-        quit_match_button_loc = (510, 540, 892, 109)
-        game_counter = 0
-        while True:
-            screenshot = take_screenshot()
-            # Check if match has ended.
-            if find_image_on_screen("quit_match.png", quit_match_button_loc, screenshot) is None:
-                # Match is still ongoing, check if a new game has started. Also speed up the game.
-                ten_x_speed_button_loc = (window_width - 115, window_height - 115, window_width, window_height)
-                if find_and_click_image("10x_speed.png", ten_x_speed_button_loc, screenshot):
-                    game_counter += 1
-                    print(f">> Game {game_counter} has started.")
-                    pyautogui.moveTo(10, 10, duration=pyautogui.MINIMUM_DURATION)
-            else:
-                # Match has ended.
-                # Find how many games won each player and who won the match.
-                if not find_and_click_image("copy_to_clipboard.png", (475, 985, 965, 75), screenshot):
-                    raise RuntimeError("Couldn't copy log to clipboard.")
-                re_match = re.match(
-                    r"^Match result: 1: ([0-3]) 2: ([0-3]) 3: ([0-3]) 4: ([0-3])\s*$",
-                    GetData().split("\n", maxsplit=1)[0],
-                )
-                if re_match:
-                    winner_idx = -1
-                    winner_games_won = -1
-                    for player_idx in range(4):
-                        game_counts[decks[player_idx]] += game_counter
-                        games_won = int(re_match.group(player_idx + 1))
-                        game_wins[decks[player_idx]] += games_won
-                        if VERBOSE:
-                            print(f"> '{decks[player_idx]}' won {games_won} games.")
-                        if games_won > winner_games_won:
-                            winner_idx = player_idx
-                            winner_games_won = games_won
-                        match_counts[decks[player_idx]] += 1
-                    match_wins[decks[winner_idx]] += 1
-                    print(f">> Match {match_idx + 1} ended after {game_counter} games. Winner: '{decks[winner_idx]}'.")
-                    find_and_click_image("quit_match.png", quit_match_button_loc, screenshot)
-                    break
+            # Wait for the match to end.
+            print(">> Waiting for the match to end.")
+            window_width, window_height = window.client_rect().right, window.client_rect().bottom
+            quit_match_button_loc = (510, 540, 892, 109)
+            game_counter = 0
+            match_start_time = time.time()
+            timeout_seconds = 10 * 60  # 10 minutes
+            while True:
+                screenshot = take_screenshot()
+                # Check if match has ended.
+                if find_image_on_screen("quit_match.png", quit_match_button_loc, screenshot) is None:
+                    # Match is still ongoing, check if a new game has started. Also speed up the game.
+                    ten_x_speed_button_loc = (window_width - 115, window_height - 115, window_width, window_height)
+                    if find_and_click_image("10x_speed.png", ten_x_speed_button_loc, screenshot):
+                        game_counter += 1
+                        print(f">> Game {game_counter} has started.")
+                        pyautogui.moveTo(10, 10, duration=pyautogui.MINIMUM_DURATION)
+                    # Check for timeout
+                    if time.time() - match_start_time > timeout_seconds:
+                        if attempts_left == 0:
+                            raise RuntimeError("Couldn't end the match. Ran out of attempts.")
+                        # Try to quit the match
+                        print(">> Error: Timeout reached. Attempting to restart the match.")
+                        move_and_click((275, 70))
+                        time.sleep(0.25)
+                        move_and_click((275, 110))
+                        time.sleep(0.25)
+                        move_and_click((40, 1040))
+                        time.sleep(0.25)
+                        attempts_left -= 1
+                        break
                 else:
-                    raise RuntimeError("Couldn't parse the match summary.")
-            time.sleep(5)
+                    # Match has ended.
+                    # Find how many games won each player and who won the match.
+                    if not find_and_click_image("copy_to_clipboard.png", (475, 985, 965, 75), screenshot):
+                        raise RuntimeError("Couldn't copy log to clipboard.")
+                    re_match = re.match(
+                        r"^Match result: 1: ([0-3]) 2: ([0-3]) 3: ([0-3]) 4: ([0-3])\s*$",
+                        GetData().split("\n", maxsplit=1)[0],
+                    )
+                    if re_match:
+                        winner_idx = -1
+                        winner_games_won = -1
+                        for player_idx in range(4):
+                            game_counts[decks[player_idx]] += game_counter
+                            games_won = int(re_match.group(player_idx + 1))
+                            game_wins[decks[player_idx]] += games_won
+                            if VERBOSE:
+                                print(f"> '{decks[player_idx]}' won {games_won} games.")
+                            if games_won > winner_games_won:
+                                winner_idx = player_idx
+                                winner_games_won = games_won
+                            match_counts[decks[player_idx]] += 1
+                        match_wins[decks[winner_idx]] += 1
+                        print(
+                            f">> Match {match_idx + 1} ended after {game_counter} games. Winner: '{decks[winner_idx]}'."
+                        )
+                        find_and_click_image("quit_match.png", quit_match_button_loc, screenshot)
+                        attempts_left = 0
+                        break
+                    else:
+                        raise RuntimeError("Couldn't parse the match summary.")
+                time.sleep(5)
 
     for deck, wins in sorted(match_wins.items(), key=lambda item: item[1], reverse=True):
         print(f">> Deck '{deck}' won {wins} matches. Match win rate: {100 * wins / match_counts[deck]}%.")
