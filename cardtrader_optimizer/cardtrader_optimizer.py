@@ -13,7 +13,7 @@ PASTE CARD LIST HERE
 
 expansion_choice = "Any"
 foil_choice = "Any"
-condition = "Slightly Played"
+condition = "Played"
 # replace below to filter only the languages that you are interested
 all_languages = ["en", "es", "pt", "it"]
 language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25}  # in cents
@@ -33,10 +33,13 @@ driver.get("https://www.cardtrader.com/wishlists/new")
 # CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
 
 # --- Step 0: Click the "Accept" button ---
-accept_button = WebDriverWait(driver, 10).until(
-    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept']"))
-)
-accept_button.click()
+try:
+    accept_button = WebDriverWait(driver, 3).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept']"))
+    )
+    accept_button.click()
+except Exception:
+    pass
 
 # --- Step 1: Click the "Paste text" button ---
 paste_button = WebDriverWait(driver, 10).until(
