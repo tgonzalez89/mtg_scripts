@@ -16,7 +16,7 @@ foil_choice = "Any"
 condition = "Played"
 # replace below to filter only the languages that you are interested
 all_languages = ["en", "es", "pt", "it"]
-language_change_price_thresholds = {"en": 0, "es": 25, "pt": 25, "it": 25}  # in cents
+language_change_price_thresholds = {"en": 0, "es": 50, "pt": 50, "it": 50}  # in cents
 
 options = Options()
 """
@@ -26,7 +26,8 @@ Steps to Locate Your Firefox Profile Folder:
 3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
 4. Under that profile, find the "Root Directory" path.
 """
-options.set_preference("profile", r"C:\Users\<user>\AppData\Roaming\Waterfox\Profiles\<random_string>.default-release")
+options.add_argument("-profile")
+options.add_argument(r"C:\Users\<user>\AppData\Roaming\Waterfox\Profiles\<random_string>.default-release")
 driver = webdriver.Firefox(options=options)
 driver.get("https://www.cardtrader.com/wishlists/new")
 
@@ -34,7 +35,7 @@ driver.get("https://www.cardtrader.com/wishlists/new")
 
 # --- Step 0: Click the "Accept" button ---
 try:
-    accept_button = WebDriverWait(driver, 3).until(
+    accept_button = WebDriverWait(driver, 1).until(
         EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept']"))
     )
     accept_button.click()
