@@ -1,7 +1,7 @@
 # python simulator.py $(Get-ChildItem "C:\Users\$env:USERNAME\AppData\Roaming\Forge\decks\commander" -Filter "*.dck" | ForEach-Object { '"{0}"' -f $_.BaseName })
 
-
 import argparse
+import copy
 import difflib
 import re
 import time
@@ -33,6 +33,7 @@ def parse_arguments():
         description="Simulate 4-player free-for-all games in Forge using a list of deck names."
     )
     parser.add_argument("decks", type=str, nargs="+", help="List of deck names (minimum 4).")
+    parser.add_argument("--min_matches", type=int, required=False, help="Min number of matches that need to be run.")
     args = parser.parse_args()
 
     if len(args.decks) < 4:
@@ -40,7 +41,8 @@ def parse_arguments():
 
     if DEBUG:
         print(f"Using decks: {args.decks}.")
-    return args.decks
+        print(f"Min matches: {args.min_matches}.")
+    return args.decks, args.min_matches
 
 
 def focus_on_window(title_pattern):
@@ -435,7 +437,7 @@ def setup_player(player_number, base_coords):
 def main():
     focus_on_window(r"Forge.*SNAPSHOT.*")
 
-    all_decks = parse_arguments()
+    all_decks, min_matches = parse_arguments()
 
     match_setup_loc = (375, 0, 1537, 82)
     if find_image_on_screen("match_setup.png", match_setup_loc) is None:
@@ -454,6 +456,9 @@ def main():
     setup_player(4, player_4_coords)
 
     deck_combinations = list(combinations(all_decks, 4))
+    deck_combinations_orig = copy.copy(deck_combinations)
+    while len(deck_combinations) < min_matches:
+        deck_combinations += deck_combinations_orig
     match_counts = {deck: 0 for deck in all_decks}
     match_wins = {deck: 0 for deck in all_decks}
     game_counts = {deck: 0 for deck in all_decks}
@@ -540,11 +545,11 @@ def main():
                         raise RuntimeError("Couldn't parse the match summary.")
                 time.sleep(5)
 
-    for deck, wins in sorted(match_wins.items(), key=lambda item: item[1], reverse=True):
-        print(f">> Deck '{deck}' won {wins} matches. Match win rate: {100 * wins / match_counts[deck]}%.")
-        print(
-            f">> Deck '{deck}' won {game_wins[deck]} games. Game win rate: {100 * game_wins[deck] / game_counts[deck]}%."
-        )
+        for deck, wins in sorted(match_wins.items(), key=lambda item: item[1], reverse=True):
+            print(f">> Deck '{deck}' won {wins} matches. Match win rate: {100 * wins / match_counts[deck]}%.")
+            print(
+                f">> Deck '{deck}' won {game_wins[deck]} games. Game win rate: {100 * game_wins[deck] / game_counts[deck]}%."
+            )
 
 
 if __name__ == "__main__":
