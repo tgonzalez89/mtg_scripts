@@ -61,7 +61,7 @@ def parse_args():
 
     parser.add_argument(
         "--have-deck-ids",
-        "-h",
+        "-v",
         nargs="*",
         default=[],
         help="Moxfield deck IDs you already have. Group variants using parentheses, e.g. '(id3,id4)'.",
@@ -77,16 +77,10 @@ def parse_args():
 
     args = parser.parse_args()
 
-    want_deck_ids = parse_deck_id_arg(args.want_deck_ids)
-    have_deck_ids = parse_deck_id_arg(args.have_deck_ids)
+    args.want_deck_ids = parse_deck_id_arg(args.want_deck_ids)
+    args.have_deck_ids = parse_deck_id_arg(args.have_deck_ids)
 
-    return {
-        "owned_file": args.owned_file,
-        "purchased_file": args.purchased_file,
-        "buy_considering": args.buy_considering,
-        "want_deck_ids": want_deck_ids,
-        "have_deck_ids": have_deck_ids,
-    }
+    return args
 
 
 def parse_owned_file(path: str) -> dict[str, int]:
@@ -136,8 +130,8 @@ args = parse_args()
 # Get purchased cards.
 
 purchased_cards: dict[str, int] = {}
-if Path(args["purchased_file"]).is_file():
-    with Path(args["purchased_file"]).open() as f:
+if Path(args.purchased_file).is_file():
+    with Path(args.purchased_file).open() as f:
         text = f.read()
     pattern = re.compile(r"(.+?)\n\t\n\w+ (\d+)\n\t\1", re.DOTALL)
     matches = pattern.findall(text)
@@ -152,7 +146,7 @@ if DEBUG_JSON:
 
 # Get owned cards.
 
-owned_cards = parse_owned_file(args["owned_file"])
+owned_cards = parse_owned_file(args.owned_file)
 
 if DEBUG_JSON:
     json.dump(owned_cards, Path("owned.json").open("w"), indent=2, sort_keys=True)
@@ -198,7 +192,7 @@ def download_deck(deck_id) -> tuple[dict[str, int], dict[str, int]]:
 
 cards_in_decks: dict[str, int] = {}
 considering_cards: dict[str, int] = {}
-for deck_id in args["want_deck_ids"] + args["have_deck_ids"]:
+for deck_id in args.want_deck_ids + args.have_deck_ids:
     if isinstance(deck_id, tuple):
         main_decks = []
         maybeboards = []
@@ -218,7 +212,7 @@ for deck_id in args["want_deck_ids"] + args["have_deck_ids"]:
         main_deck, maybeboard = download_deck(deck_id)
 
     for card_name, amount in main_deck.items():
-        if deck_id in args["have_deck_ids"] and card_name in have:
+        if deck_id in args.have_deck_ids and card_name in have:
             if have[card_name] > amount:
                 # I have more than I need for the deck, subtract from have and don't add to cards_in_deck because I don't need copies of this card for this deck.
                 have[card_name] = have[card_name] - amount
@@ -232,7 +226,7 @@ for deck_id in args["want_deck_ids"] + args["have_deck_ids"]:
         else:
             cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
     for card_name, amount in maybeboard.items():
-        if deck_id in args["have_deck_ids"] and card_name in have:
+        if deck_id in args.have_deck_ids and card_name in have:
             if amount > have[card_name]:
                 # I don't have enough copies, remove card from have and add to cards_in_deck the amount minus what I have (what I actually need).
                 considering_cards[card_name] = considering_cards.get(card_name, 0) + amount - have[card_name]
@@ -250,7 +244,7 @@ if DEBUG_JSON:
 need = copy.copy(cards_in_decks)
 need_decks = copy.copy(cards_in_decks)
 need_considering = {}
-if args["buy_considering"]:
+if args.buy_considering:
     for card_name, amount in considering_cards.items():
         if card_name not in need:
             # Only add 1 copy of each card from considering and only if it is not already in the decks.

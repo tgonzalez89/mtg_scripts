@@ -124,14 +124,7 @@ def parse_args():
 
     args = parser.parse_args()
 
-    return {
-        "card_list": args.card_list,
-        "expansion_choice": args.expansion_choice,
-        "foil_choice": args.foil_choice,
-        "condition": args.condition,
-        "language_price_deltas": args.language_price_deltas,
-        "browser_profile": args.browser_profile,
-    }
+    return args
 
 
 args = parse_args()
@@ -324,18 +317,18 @@ def get_prices():
 
 cards = {}
 
-for idx, language in enumerate(args["language_price_deltas"]):
-    set_expansion(args["expansion_choice"])
+for idx, language in enumerate(args.language_price_deltas):
+    set_expansion(args.expansion_choice)
     set_language(language)
-    set_condition(args["condition"])
-    set_foil(args["foil_choice"])
+    set_condition(args.condition)
+    set_foil(args.foil_choice)
     click_button("'Optimize'" if idx == 0 else "'Refresh'")
     wait_for_optimizer()
     cards[language] = get_prices()
     print(f"cards[{language}]={cards[language]}")
 
 # If only one language, no need to choose language per card and optimize.
-if len(args["language_price_deltas"]) == 1:
+if len(args.language_price_deltas) == 1:
     exit()
 
 
@@ -374,15 +367,15 @@ def choose_languages(prices_by_lang, config):
     return chosen_languages
 
 
-cards_chosen_lang = choose_languages(cards, args["language_price_deltas"])
+cards_chosen_lang = choose_languages(cards, args.language_price_deltas)
 print(f"{cards_chosen_lang=}")
 
-for language in args["language_price_deltas"]:
+for language in args.language_price_deltas:
     print(f"Total in {language}    ({len(cards[language])} cards): {sum(cards[language].values())}")
 
 
 # --- Step 13: Optimize cards using the chosen language ---
-set_expansion(args["expansion_choice"])
+set_expansion(args.expansion_choice)
 # Find all card rows with required attributes (same as before)
 card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
 for row in card_rows:
@@ -403,8 +396,8 @@ for row in card_rows:
             select.select_by_value(chosen_lang)
         except Exception:
             print(f"Error: Couldn't select the chosen language for card {repr(card_name)}. Selecting Any as fallback.")
-set_condition(args["condition"])
-set_foil(args["foil_choice"])
+set_condition(args.condition)
+set_foil(args.foil_choice)
 click_button("'Refresh'")
 wait_for_optimizer()
 cards_optimized = get_prices()
