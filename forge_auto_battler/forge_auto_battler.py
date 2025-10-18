@@ -1,5 +1,3 @@
-# python simulator.py $(Get-ChildItem "C:\Users\$env:USERNAME\AppData\Roaming\Forge\decks\commander" -Filter "*.dck" | ForEach-Object { '"{0}"' -f $_.BaseName })
-
 import argparse
 import copy
 import difflib

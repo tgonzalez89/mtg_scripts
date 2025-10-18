@@ -1,14 +1,78 @@
+import argparse
 import json
 from pathlib import Path
 
 import pyedhrec
 
-commander_name = "PASTE COMMANDER NAME HERE"
-vendor = "cardkingdom"
-synergy_threshold = 0.15
-inclusion_threshold = 0.15
-price_threshold = 20
-themes = (None,)  # Add themes here
+VERBOSE = True  # Set to True to enable info messages
+DEBUG_JSON = False  # Set to True to enable saving intermediate data as json files
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    # Required positional or optional commander names
+    parser.add_argument(
+        "--commander-names", "-c", nargs="+", required=True, help="List of commander names (at least one required)."
+    )
+
+    parser.add_argument("--themes", "-t", nargs="*", default=[None], help="List of themes (optional).")
+
+    parser.add_argument(
+        "--synergy-threshold", "-s", type=float, default=0.15, help="Synergy threshold between 0 and 1 (default: 0.15)."
+    )
+
+    parser.add_argument(
+        "--inclusion-threshold",
+        "-i",
+        type=float,
+        default=0.15,
+        help="Inclusion threshold between 0 and 1 (default: 0.15).",
+    )
+
+    parser.add_argument(
+        "--price-threshold", "-p", type=float, default=25.0, help="Price threshold (positive float, default: 25)."
+    )
+
+    parser.add_argument(
+        "--vendor",
+        "-v",
+        choices=[
+            "cardhoarder",
+            "cardkingdom",
+            "cardmarket",
+            "face2face",
+            "manapool",
+            "mtgstocks",
+            "scg",
+            "tcgl",
+            "tcgplayer",
+        ],
+        default="cardkingdom",
+        help="Vendor to use (default: cardkingdom).",
+    )
+
+    args = parser.parse_args()
+
+    # Convert lists to tuples for consistency
+    commander_names = tuple(args.commander_names)
+    themes = tuple(args.themes) if args.themes else (None,)
+
+    assert args.synergy_threshold >= 0 and args.synergy_threshold <= 1
+    assert args.inclusion_threshold >= 0 and args.inclusion_threshold <= 1
+    assert args.price_threshold >= 0
+
+    return {
+        "commander_names": commander_names,
+        "vendor": args.vendor,
+        "synergy_threshold": args.synergy_threshold,
+        "inclusion_threshold": args.inclusion_threshold,
+        "price_threshold": args.price_threshold,
+        "themes": themes,
+    }
+
+
+args = parse_args()
 
 
 # Modified EDHRec class to support budget and themes.
@@ -32,98 +96,104 @@ class MyEDHRec(pyedhrec.EDHRec):
 edhrec = MyEDHRec()
 cards_occurrences: dict[str, int] = {}
 
-for theme in themes:
-    print(f"Theme: {theme}")
-    cards = {}
-    data = edhrec.get_commander_data(commander_name, None, theme)
-    for card_list in data["container"]["json_dict"]["cardlists"]:
-        for card in card_list["cardviews"]:
-            if (
-                card["synergy"] >= synergy_threshold
-                or card["num_decks"] / card["potential_decks"] >= inclusion_threshold
-            ):
-                cards[card["name"]] = card
+for commander_name in args["commander_names"]:
+    if VERBOSE:
+        print(f"Processing commander: {commander_name}")
+    for theme in args["themes"]:
+        if VERBOSE:
+            print(f"Processing theme: {theme}")
+        cards = {}
+        data = edhrec.get_commander_data(commander_name, None, theme)
+        for card_list in data["container"]["json_dict"]["cardlists"]:
+            for card in card_list["cardviews"]:
+                if (
+                    card["synergy"] >= args["synergy_threshold"]
+                    or card["num_decks"] / card["potential_decks"] >= args["inclusion_threshold"]
+                ):
+                    cards[card["name"]] = card
 
-    cards_budget = {}
-    data = edhrec.get_commander_data(commander_name, "budget", theme)
-    for card_list in data["container"]["json_dict"]["cardlists"]:
-        for card in card_list["cardviews"]:
-            if (
-                card["synergy"] >= synergy_threshold
-                or card["num_decks"] / card["potential_decks"] >= inclusion_threshold
-            ):
-                cards_budget[card["name"]] = card
+        cards_budget = {}
+        data = edhrec.get_commander_data(commander_name, "budget", theme)
+        for card_list in data["container"]["json_dict"]["cardlists"]:
+            for card in card_list["cardviews"]:
+                if (
+                    card["synergy"] >= args["synergy_threshold"]
+                    or card["num_decks"] / card["potential_decks"] >= args["inclusion_threshold"]
+                ):
+                    cards_budget[card["name"]] = card
 
-    # Filter by price
-    data = edhrec.get_card_list([card_name for card_name in cards])
-    for card in data["cards"].values():
-        if card["prices"][vendor]["price"] <= price_threshold:
-            cards[card["name"]]["price"] = card["prices"][vendor]["price"]
-        else:
-            cards.pop(card["name"])
+        # Filter by price
+        data = edhrec.get_card_list([card_name for card_name in cards])
+        for card in data["cards"].values():
+            if card["prices"][args["vendor"]]["price"] <= args["price_threshold"]:
+                cards[card["name"]]["price"] = card["prices"][args["vendor"]]["price"]
+            else:
+                cards.pop(card["name"])
 
-    data = edhrec.get_card_list([card_name for card_name in cards_budget])
-    for card in data["cards"].values():
-        if card["prices"][vendor]["price"] <= price_threshold:
-            cards_budget[card["name"]]["price"] = card["prices"][vendor]["price"]
-        else:
-            cards_budget.pop(card["name"])
+        data = edhrec.get_card_list([card_name for card_name in cards_budget])
+        for card in data["cards"].values():
+            if card["prices"][args["vendor"]]["price"] <= args["price_threshold"]:
+                cards_budget[card["name"]]["price"] = card["prices"][args["vendor"]]["price"]
+            else:
+                cards_budget.pop(card["name"])
 
-    with Path(f"cards_{theme}.json").open("w") as fp:
-        json.dump(cards, fp, indent=2, sort_keys=True)
+        if DEBUG_JSON:
+            with Path(f"cards_{theme}.json").open("w") as fp:
+                json.dump(cards, fp, indent=2, sort_keys=True)
 
-    with Path(f"cards_budget_{theme}.json").open("w") as fp:
-        json.dump(cards_budget, fp, indent=2, sort_keys=True)
+            with Path(f"cards_budget_{theme}.json").open("w") as fp:
+                json.dump(cards_budget, fp, indent=2, sort_keys=True)
 
-    avg_deck = []
-    data = edhrec.get_commanders_average_deck(commander_name, None, theme)
-    for card in data["decklist"]:
-        avg_deck.append(card.split(" ", maxsplit=1)[1])
+        avg_deck = []
+        data = edhrec.get_commanders_average_deck(commander_name, None, theme)
+        for card in data["decklist"]:
+            avg_deck.append(card.split(" ", maxsplit=1)[1])
 
-    avg_deck_budget = []
-    data = edhrec.get_commanders_average_deck(commander_name, "budget", theme)
-    for card in data["decklist"]:
-        avg_deck_budget.append(card.split(" ", maxsplit=1)[1])
+        avg_deck_budget = []
+        data = edhrec.get_commanders_average_deck(commander_name, "budget", theme)
+        for card in data["decklist"]:
+            avg_deck_budget.append(card.split(" ", maxsplit=1)[1])
 
-    # Filter by price
-    data = edhrec.get_card_list(avg_deck)
-    for card in data["cards"].values():
-        if card["prices"][vendor]["price"] > price_threshold:
-            avg_deck.remove(card["name"])
+        # Filter by price
+        data = edhrec.get_card_list(avg_deck)
+        for card in data["cards"].values():
+            if card["prices"][args["vendor"]]["price"] > args["price_threshold"]:
+                avg_deck.remove(card["name"])
 
-    data = edhrec.get_card_list(avg_deck_budget)
-    for card in data["cards"].values():
-        if card["prices"][vendor]["price"] > price_threshold:
-            avg_deck_budget.remove(card["name"])
+        data = edhrec.get_card_list(avg_deck_budget)
+        for card in data["cards"].values():
+            if card["prices"][args["vendor"]]["price"] > args["price_threshold"]:
+                avg_deck_budget.remove(card["name"])
 
-    with Path(f"avg_deck_{theme}.json").open("w") as fp:
-        json.dump(avg_deck, fp, indent=2, sort_keys=True)
+        if DEBUG_JSON:
+            with Path(f"avg_deck_{theme}.json").open("w") as fp:
+                json.dump(avg_deck, fp, indent=2, sort_keys=True)
 
-    with Path(f"avg_deck_budget_{theme}.json").open("w") as fp:
-        json.dump(avg_deck_budget, fp, indent=2, sort_keys=True)
+            with Path(f"avg_deck_budget_{theme}.json").open("w") as fp:
+                json.dump(avg_deck_budget, fp, indent=2, sort_keys=True)
 
-    for card_name in cards:
-        cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
-    for card_name in cards_budget:
-        cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
-    for card_name in avg_deck:
-        cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
-    for card_name in avg_deck_budget:
-        cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
-    cards_occurrences.pop(commander_name)
+        for card_name in cards:
+            cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
+        for card_name in cards_budget:
+            cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
+        for card_name in avg_deck:
+            cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
+        for card_name in avg_deck_budget:
+            cards_occurrences[card_name] = cards_occurrences.get(card_name, 0) + 1
 
-cards_main_deck = [card_name for card_name, occurrences in cards_occurrences.items() if occurrences >= 3 * len(themes)]
+cards_main_deck = [
+    card_name
+    for card_name, occurrences in cards_occurrences.items()
+    if occurrences >= 3 * len(args["themes"]) * len(args["commander_names"])
+]
 cards_considering = [
-    card_name for card_name, occurrences in cards_occurrences.items() if occurrences <= 2 * len(themes)
+    card_name
+    for card_name, occurrences in cards_occurrences.items()
+    if occurrences <= 2 * len(args["themes"]) * len(args["commander_names"])
 ]
 
+with Path("main_deck.txt").open("w") as fp:
+    fp.writelines(card_name + "\n" for card_name in sorted(cards_main_deck))
 
-print("MAIN DECK:\n")
-for card_name in sorted(cards_main_deck):
-    print(card_name)
-
-print()
-
-print("CONSIDERING:\n")
-for card_name in sorted(cards_considering):
-    print(card_name)
+with Path("considering.txt").open("w") as fp:
+    fp.writelines(card_name + "\n" for card_name in sorted(cards_considering))

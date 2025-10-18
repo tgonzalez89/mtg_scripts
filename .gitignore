@@ -4,6 +4,4 @@ decks/
 *.json
 debug*.png
 test*.png
-owned.txt
-purchased.txt
-to_purchase*.txt
+*.txt
