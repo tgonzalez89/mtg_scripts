@@ -9,6 +9,19 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
+# CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
+
+"""
+Steps to Locate Your Firefox Profile Folder:
+1. Open Firefox.
+2. In the address bar, type: about:profiles and press Enter.
+3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
+4. Under that profile, find the "Root Directory" path.
+"""
+
+
+ALLOWED_LANGS = sorted({"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"})
+
 
 def parse_language_deltas(arg_value: str) -> dict[str, int]:
     """
@@ -22,8 +35,6 @@ def parse_language_deltas(arg_value: str) -> dict[str, int]:
     - No repeated languages
     - "Any" can only appear as the last language
     """
-    ALLOWED_LANGS = {"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"}
-
     if not arg_value:
         return {"Any": 0}
 
@@ -61,11 +72,14 @@ def parse_language_deltas(arg_value: str) -> dict[str, int]:
 
         lang_delta[lang] = delta
 
+    if not lang_delta:
+        raise argparse.ArgumentTypeError("Can't be empty.")
+
     return lang_delta
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Filter and price cards based on conditions and language deltas.")
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "--card-list", "-c", required=True, help="Path to a text file containing the card list (required)."
@@ -95,9 +109,17 @@ def parse_args():
         type=parse_language_deltas,
         default={"Any": 0},
         help=(
-            "Language price deltas in cents, format example: 'en:0,es:25,pt:50'. First must be 0, 'Any' only allowed last. "
+            "Language price deltas in cents. Format example: 'en:0,es:25,pt:50'. First must be 0, 'Any' only allowed last. "
+            f"Allowed languages: {{{','.join(lang for lang in ALLOWED_LANGS)}}}. "
             "(default: 'Any:0')"
         ),
+    )
+
+    parser.add_argument(
+        "--browser-profile",
+        "-b",
+        help="Path to Firefox profile. E.g. "
+        r"C:\Users\<user>\AppData\Roaming\Firefox\Profiles\<random_string>.default-release",
     )
 
     args = parser.parse_args()
@@ -108,6 +130,7 @@ def parse_args():
         "foil_choice": args.foil_choice,
         "condition": args.condition,
         "language_price_deltas": args.language_price_deltas,
+        "browser_profile": args.browser_profile,
     }
 
 
@@ -115,23 +138,15 @@ args = parse_args()
 
 card_list = Path(args.card_list).open().read()
 
-
 options = Options()
-"""
-Steps to Locate Your Firefox Profile Folder:
-1. Open Firefox.
-2. In the address bar, type: about:profiles and press Enter.
-3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
-4. Under that profile, find the "Root Directory" path.
-"""
-options.add_argument("-profile")
-options.add_argument(r"C:\Users\<user>\AppData\Roaming\Waterfox\Profiles\<random_string>.default-release")
+if args.browser_profile:
+    options.add_argument("-profile")
+    options.add_argument(args.browser_profile)
 driver = webdriver.Firefox(options=options)
-driver.get("https://www.cardtrader.com/wishlists/new")
-
-# CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
 
 # --- Step 0: Click the "Accept" button ---
+driver.get("https://www.cardtrader.com/wishlists/new")
+
 try:
     accept_button = WebDriverWait(driver, 1).until(
         EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept']"))

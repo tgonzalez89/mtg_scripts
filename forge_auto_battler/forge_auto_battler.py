@@ -17,7 +17,10 @@ from pywinauto.findwindows import find_window
 from pywinauto.keyboard import send_keys
 from wakepy import keep
 
-# Config
+# TODO: Make it more generic, so that the number of players is flexible (2-4, maybe more?)
+
+
+# Config variables
 VERBOSE = True  # Set to True to enable info messages
 DEBUG = True  # Set to True to enable debug messages
 DEBUG_IMG = True  # Set to True to enable saving debug screenshots.
