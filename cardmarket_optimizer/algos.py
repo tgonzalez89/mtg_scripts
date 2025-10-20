@@ -111,6 +111,6 @@ for card_name, amount in card_list.items():
         selected_offers[card_name].append(selected_offer)
         amount_left -= selected_offer["selected_amount"]
 
-json.dump(selected_offers, Path("algo.json").open("w"), indent=2)
+json.dump(selected_offers, Path("selected_offers.json").open("w"), indent=2, sort_keys=True)
 total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
 print(f"{total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
