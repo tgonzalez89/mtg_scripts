@@ -34,7 +34,7 @@ def parse_arguments():
         description="Simulate 4-player free-for-all games in Forge using a list of deck names."
     )
     parser.add_argument("decks", type=str, nargs="+", help="List of deck names (minimum 4).")
-    parser.add_argument("--min_matches", type=int, required=False, help="Min number of matches that need to be run.")
+    parser.add_argument("--min-matches", type=int, required=False, help="Min number of matches that need to be run.")
     args = parser.parse_args()
 
     if len(args.decks) < 4:
