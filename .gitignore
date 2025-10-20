@@ -6,3 +6,4 @@ debug*.png
 test*.png
 *.txt
 *.html
+__pycache__/
