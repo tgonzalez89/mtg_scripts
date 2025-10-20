@@ -1,5 +1,6 @@
 import json
 import math
+import random
 from pathlib import Path
 
 card_list: dict[str, int] = {}
@@ -21,7 +22,7 @@ for card_name, amount in card_list.items():
         if str(offer["seller"]) not in sellers_database:
             sellers_db_cards_available[str(offer["seller"])] = {
                 "shipping_price": float(offer["shipping_price"]),
-                "cards_available": selected_amount,
+                "cards_available": 0,
             }
         sellers_db_cards_available[str(offer["seller"])]["cards_available"] += selected_amount
 
@@ -59,16 +60,20 @@ def calc_total_prices(selected_offers: dict[str, list[dict[str, int | float | st
 #              Disregards that shipping costs remain flat even though a seller with a higher item price could have more copies.
 #              Disregards how bundling together different cards with the same seller keeps shipping costs flat.
 
+
 offers_database = json.load(Path("offers_database.json").open())
-selected_offers = {}
 for card_name in offers_database:
-    offers_database[card_name] = sorted(offers_database[card_name], key=lambda x: x["total_price"])
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
+selected_offers = {}
 for card_name, amount in card_list.items():
     if card_name not in offers_database:
         continue
     selected_offers[card_name] = []
     amount_left = amount
-    for offer in offers_database[card_name]:
+    for offer in sorted(offers_database[card_name], key=lambda x: x["total_price"]):
         assert isinstance(offer["amount"], int)
         if amount_left >= offer["amount"]:
             offer["selected_amount"] = offer["amount"]
@@ -111,6 +116,11 @@ def get_best_offer(offers_database: dict[str, list[dict[str, int | float | str]]
 
 
 offers_database = json.load(Path("offers_database.json").open())
+for card_name in offers_database:
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
 selected_offers = {}
 for card_name, amount in card_list.items():
     if card_name not in offers_database:
@@ -152,6 +162,11 @@ def get_best_offer_use_selected_sellers(
 
 
 offers_database = json.load(Path("offers_database.json").open())
+for card_name in offers_database:
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
 selected_offers = {}
 selected_sellers = set()
 for card_name, amount in card_list.items():
@@ -180,30 +195,40 @@ def average_offer_price(offers: list[dict[str, int | float | str]]) -> float:
 
 
 offers_database = json.load(Path("offers_database.json").open())
-selected_offers = {}
-selected_sellers = set()
-offers_database = dict(
+for card_name in offers_database:
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
+card_list = dict(
     sorted(
-        offers_database.items(),
-        key=lambda item: (
-            -card_list.get(item[0], 0),  # most needed first
-            -average_offer_price(item[1]),  # most expensive first
+        card_list.items(),
+        key=lambda x: (
+            -x[1],  # most needed first
+            -average_offer_price(offers_database[x[0]]),  # most expensive second
         ),
     )
 )
-for card_name, amount in card_list.items():
-    if card_name not in offers_database:
-        continue
-    selected_offers[card_name] = []
-    amount_left = amount
-    while amount_left > 0:
-        selected_offer = get_best_offer_use_selected_sellers(offers_database, card_name, amount_left)
-        selected_offers[card_name].append(selected_offer)
-        amount_left -= selected_offer["selected_amount"]
+for _ in range(100):
+    offers_database = json.load(Path("offers_database.json").open())
+    selected_offers = {}
+    selected_sellers = set()
+    items = list(card_list.items())
+    random.shuffle(items)
+    card_list = dict(items)
+    for card_name, amount in card_list.items():
+        if card_name not in offers_database:
+            continue
+        selected_offers[card_name] = []
+        amount_left = amount
+        while amount_left > 0:
+            selected_offer = get_best_offer_use_selected_sellers(offers_database, card_name, amount_left)
+            selected_offers[card_name].append(selected_offer)
+            amount_left -= selected_offer["selected_amount"]
 
-json.dump(selected_offers, Path("algo4.json").open("w"), indent=2)
-total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
-print(f"Algo 4: {total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
+    json.dump(selected_offers, Path("algo4.json").open("w"), indent=2)
+    total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
+    print(f"Algo 4: {total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
 
 
 # ALGORITHM 5: Same as algorithm's 4 method but prioritizes sellers with the most amount of cards available.
@@ -239,14 +264,19 @@ def get_best_offer_biggest_sellers(
 
 
 offers_database = json.load(Path("offers_database.json").open())
+for card_name in offers_database:
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
 selected_offers = {}
 selected_sellers = set()
-offers_database = dict(
+card_list = dict(
     sorted(
-        offers_database.items(),
-        key=lambda item: (
-            -card_list.get(item[0], 0),  # most needed first
-            -average_offer_price(item[1]),  # most expensive first
+        card_list.items(),
+        key=lambda x: (
+            -x[1],  # most needed first
+            -average_offer_price(offers_database[x[0]]),  # most expensive first
         ),
     )
 )
@@ -265,7 +295,103 @@ total_price, items_price, shipping_price, sellers = calc_total_prices(selected_o
 print(f"Algo 5: {total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
 
 
-# ALGORITHM 6: Prioritizes sellers with the most amount of cards available.
-# a. simply choose the seller with the most amount every time. total disregard from price. if tied, chose the cheapest per card
-# b. if no offers with sellers that have been chosen, use method (a)
-#    if there are offers with sellers that have been chosen, choose the cheapest (per card) only from offers with sellers we've chosen.
+# ALGORITHM 6: Prioritizes sellers with the most amount of cards available, over everything else.
+#              Simply chooses the seller with the most amount every time.
+#              Total disregard from price. If tied, chose the cheapest per card.
+
+
+offers_database = json.load(Path("offers_database.json").open())
+selected_offers = {}
+# for card_name in offers_database:  # Sort first by total price in case sellers are tied on cards available.
+#     offers_database[card_name] = sorted(offers_database[card_name], key=lambda x: x["total_price"])
+for card_name, amount in card_list.items():
+    if card_name not in offers_database:
+        continue
+    selected_offers[card_name] = []
+    amount_left = amount
+    for offer in sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    ):
+        assert isinstance(offer["amount"], int)
+        if amount_left >= offer["amount"]:
+            offer["selected_amount"] = offer["amount"]
+            amount_left -= offer["amount"]
+        else:
+            offer["selected_amount"] = amount_left
+            amount_left = 0
+        selected_offers[card_name].append(offer)
+        if amount_left <= 0:
+            break
+
+json.dump(selected_offers, Path("algo4.json").open("w"), indent=2)
+total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
+print(f"Algo 6: {total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
+
+
+# ALGORITHM 7: Prioritizes sellers with the most amount of cards available.
+#              If no offers with sellers that have been chosen, choose the seller with the most amount.
+#              If there are offers with sellers that have been chosen, choose the cheapest (per card) only from offers with sellers we've chosen.
+
+
+def get_best_offer_biggest_sellers_all_in(
+    offers_database: dict[str, list[dict[str, int | float | str]]], card_name: str, amount: int
+):
+    for offer in offers_database[card_name]:
+        assert isinstance(offer["amount"], int)
+        assert isinstance(offer["price"], float)
+        assert isinstance(offer["shipping_price"], float)
+        offer["selected_amount"] = offer["amount"] if amount >= offer["amount"] else amount
+        assert isinstance(offer["selected_amount"], int)
+        shipping_price = offer["shipping_price"] if offer["seller"] not in selected_sellers else 0.0
+        offer["total_price_selected_amount"] = round(offer["price"] * offer["selected_amount"] + shipping_price, 2)
+        assert isinstance(offer["total_price_selected_amount"], float)
+        offer["price_per_card"] = round(offer["total_price_selected_amount"] / offer["selected_amount"], 2)
+    offers_with_selected_sellers = sorted(
+        (offer for offer in offers_database[card_name] if str(offer["seller"] in selected_sellers)),
+        key=lambda x: x["price_per_card"],
+    )
+    if offers_with_selected_sellers:
+        selected_offer = offers_with_selected_sellers[0]
+        offers_database[card_name].pop(offers_database[card_name].index(selected_offer))
+    else:
+        offers_database[card_name] = sorted(
+            offers_database[card_name],
+            key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["price_per_card"]),
+            reverse=True,
+        )
+        selected_offer = offers_database[card_name].pop(0)
+    selected_sellers.add(str(selected_offer["seller"]))
+    return selected_offer
+
+
+offers_database = json.load(Path("offers_database.json").open())
+for card_name in offers_database:
+    offers_database[card_name] = sorted(
+        offers_database[card_name],
+        key=lambda x: (-int(sellers_db_cards_available[str(x["seller"])]["cards_available"]), x["total_price"]),
+    )
+selected_offers = {}
+selected_sellers = set()
+card_list = dict(
+    sorted(
+        card_list.items(),
+        key=lambda x: (
+            -x[1],  # most needed first
+            -average_offer_price(offers_database[x[0]]),  # most expensive first
+        ),
+    )
+)
+for card_name, amount in card_list.items():
+    if card_name not in offers_database:
+        continue
+    selected_offers[card_name] = []
+    amount_left = amount
+    while amount_left > 0:
+        selected_offer = get_best_offer_biggest_sellers_all_in(offers_database, card_name, amount_left)
+        selected_offers[card_name].append(selected_offer)
+        amount_left -= selected_offer["selected_amount"]
+
+json.dump(selected_offers, Path("algo4.json").open("w"), indent=2)
+total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
+print(f"Algo 7: {total_price=} {items_price=} {shipping_price=} {len(sellers)=}")
