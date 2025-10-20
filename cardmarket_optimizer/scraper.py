@@ -6,7 +6,7 @@ from pathlib import Path
 
 from filters import filters
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -102,9 +102,12 @@ def empty_cart(driver: WebDriver, ret=True):
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", remove_btn)
     remove_btn.click()
     # Wait for confirmation that cart is empty
-    WebDriverWait(driver, 10).until_not(
-        EC.presence_of_element_located((By.XPATH, "//input[@value='Remove all articles']"))
-    )
+    try:
+        WebDriverWait(driver, 10).until_not(
+            EC.presence_of_element_located((By.XPATH, "//input[@value='Remove all articles']"))
+        )
+    except TimeoutException:
+        return empty_cart(driver, ret)
     if ret:
         driver.back()
 
