@@ -44,17 +44,17 @@ filters = {
     "sellerReputation": 4,  # 1=Outstanding | 2=Very good | 3=Good | 4=Average | None=Bad
     "maxShippingTime": None,  # 2 | 3 | 4 | 5 | 6 | None=7+ (in days)
     "language": [
-        1,  # English
-        2,  # French
-        3,  # German
-        4,  # Spanish
-        5,  # Italian
-        6,  # S-Chinese
-        7,  # Japanese
-        8,  # Portuguese
-        9,  # Russian
-        10,  # Korean
-        11,  # T-Chinese
+        # 1,  # English
+        # 2,  # French
+        # 3,  # German
+        # 4,  # Spanish
+        # 5,  # Italian
+        # 6,  # S-Chinese
+        # 7,  # Japanese
+        # 8,  # Portuguese
+        # 9,  # Russian
+        # 10,  # Korean
+        # 11,  # T-Chinese
     ],
     "minCondition": 6,  # 1=Mint (MT) | 2=Near Mint (NM) | 3=Excellent (EX) | 4=Good (GD) 5=Light Played (LP) | 6=Played (PL) | None=Poor (PO)
     "isFoil": None,  # None=Any | "Y"=Yes | "N"=No

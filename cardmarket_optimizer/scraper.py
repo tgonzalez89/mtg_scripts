@@ -52,7 +52,7 @@ def parse_args():
         "-m",
         type=int,
         default=10,
-        help="Max amount of editions that will be looked at per wanted card.",
+        help="Max amount of editions that will be looked at, per wanted card.",
     )
     parser.add_argument(
         "--max-offers-per-edition",
@@ -60,6 +60,13 @@ def parse_args():
         type=int,
         default=10,
         help="Max amount of card offers that will be looked at, per card edition.",
+    )
+    parser.add_argument(
+        "--max-total-offers",
+        "-t",
+        type=int,
+        default=100,
+        help="Max amount of total card offers that will be looked at.",
     )
 
     args = parser.parse_args()
@@ -76,7 +83,7 @@ def get_cart_price(driver):
     # Extract numeric value
     match = re.search(r"([\d,.]+)", cart_text)
     if match:
-        return float(match.group(1).replace(",", "."))
+        return float(match.group(1).replace(".", "").replace(",", "."))
     else:
         return 0.0
 
@@ -136,7 +143,7 @@ def get_row_data(row: WebElement):
         By.XPATH,
         ".//div[contains(@class,'col-offer')]//div[contains(@class,'price-container')]//span[contains(text(),'€')]",
     )
-    price = float(card_element.text.strip().replace("€", "").replace(",", "."))
+    price = float(card_element.text.strip().replace("€", "").replace(".", "").replace(",", "."))
 
     clicked = False
     if seller_name not in sellers_database:
@@ -261,9 +268,9 @@ with keep.presenting():
     if get_cart_price(driver) != 0:
         empty_cart(driver, ret=False)
 
-    for card_name in card_list:
+    for card_num, card_name in enumerate(card_list, start=1):
         # --- Step 1: Search for card ---
-        print(f"\nProcessing card '{card_name}'")
+        print(f"\nProcessing card {card_num}/{len(card_list)} '{card_name}'")
         driver.get("https://www.cardmarket.com/en/Magic/Products/Singles")
 
         search_box = WebDriverWait(driver, 10).until(
@@ -310,26 +317,20 @@ with keep.presenting():
 
         for row in rows:
             try:
-                # Extract name and link
-                name_element = row.find_element(By.XPATH, ".//div[contains(@class,'col')]/div/div/div/a")
-                name = name_element.text.strip()
-                link = str(name_element.get_attribute("href")).strip()
-
                 # Extract rarity (from the SVG's aria-label)
                 rarity_element = row.find_element(
                     By.XPATH, ".//div[contains(@class,'col-sm-2')]/div/span/*[name()='svg' and @aria-label]"
                 )
                 rarity = str(rarity_element.get_attribute("aria-label")).strip()
-
                 # Skip unwanted rarities
                 if rarity in excluded_rarities:
                     continue
 
-                card_urls.append(link)
-
-                # Stop if we reach the limit
-                if len(card_urls) >= args.max_editions:
-                    break
+                # Extract name and link
+                name_element = row.find_element(By.XPATH, ".//div[contains(@class,'col')]/div/div/div/a")
+                url = str(name_element.get_attribute("href")).strip()
+                url = url.split("?", maxsplit=1)[0]  # Remove any filters, if any.
+                card_urls.append(url)
             except Exception as e:
                 print(e)
 
@@ -351,22 +352,24 @@ with keep.presenting():
                 card_url += "?" + all_filters_string
             card_urls_with_filters.append(card_url)
 
-        max_results = 5
-
         # --- Step 3: Visit each card page to get all the offers ---
-        for url in card_urls_with_filters:
-            url_parts = url.split("?")[0].split("/")
+        editions_limit = min(args.max_editions, len(card_urls_with_filters))
+        per_edition_limit = max(args.max_offers_per_edition, (args.max_total_offers // editions_limit))
+        print(f"DEBUG: {editions_limit=} {per_edition_limit=}")
+        total_amount_offers = 0
+        for edition_idx, url in enumerate(card_urls_with_filters):
+            url_parts = url.split("?", maxsplit=1)[0].split("/")
             edition_name = url_parts[-2]
+            print(f"Processing edition {edition_idx + 1}/{len(card_urls_with_filters)} '{edition_name}'")
 
-            print(f"Processing edition '{edition_name}'")
             driver.get(url)
 
-            # --- Step 4: Get the details of all the offers ---
+            # Get the details of all the offers
             offers: set = set()
             i = 0
             refresh_rows = True
             disappeared_rows = 0
-            while len(offers) < args.max_offers_per_edition:
+            while len(offers) < per_edition_limit:
                 # Find all rows inside the offers table
                 if refresh_rows:
                     WebDriverWait(driver, 10).until(
@@ -401,21 +404,26 @@ with keep.presenting():
                     refresh_rows = False
                 if offer is None:
                     continue
-                offer["url"] = url.split("?")[0]
+                offer["url"] = url.split("?", maxsplit=1)[0]
                 offer = frozenset(offer.items())
                 if offer not in offers:
                     tmp_dict = dict(offer)
                     tmp_dict.pop("url")
                     print(dict(sorted(tmp_dict.items())))
                 offers.add(offer)
+                total_amount_offers += 1
 
             if len(offers) > 0:
                 if card_name not in offers_database:
                     offers_database[card_name] = []
                 offers_database[card_name].extend(dict(offer) for offer in offers)
 
+            # Stop if we reach the limit.
+            if edition_idx + 1 >= args.max_editions or total_amount_offers >= args.max_total_offers:
+                break
+
         if get_cart_price(driver) != 0:
-            empty_cart(driver)
+            empty_cart(driver, ret=False)
 
         offers_database[card_name] = list(
             dict(offer) for offer in set(frozenset(offer.items()) for offer in offers_database[card_name])
