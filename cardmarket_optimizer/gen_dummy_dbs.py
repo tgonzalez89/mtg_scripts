@@ -31,7 +31,7 @@ def generate_data(
     }
 
     with open("sellers_database.json", "w") as f:
-        json.dump(sellers_db, f, indent=2)
+        json.dump(sellers_db, f, indent=2, sort_keys=True)
 
     # Generate offers_db
     offers_db = {}
@@ -61,7 +61,7 @@ def generate_data(
         buy_list[card_name] = card_amount
 
     with open("offers_database.json", "w") as f:
-        json.dump(offers_db, f, indent=2)
+        json.dump(offers_db, f, indent=2, sort_keys=True)
 
     with open("card_list.txt", "w") as f:
         f.writelines(f"{amount} {card_name}\n" for card_name, amount in buy_list.items())

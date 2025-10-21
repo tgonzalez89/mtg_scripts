@@ -75,7 +75,7 @@ def parse_args():
 
 def get_cart_price(driver):
     """Wait until cart price element is visible and return the float value."""
-    cart_price_el = WebDriverWait(driver, 10).until(
+    cart_price_el = WebDriverWait(driver, 1).until(
         EC.presence_of_element_located((By.XPATH, "//a[@id='cart']//span[contains(text(),'€')]"))
     )
     cart_text = cart_price_el.text.strip()
@@ -172,7 +172,6 @@ def get_row_data(row: WebElement):
         total_price = cart_price_after - cart_price_before
         shipping_price = total_price - price
         sellers_database[seller_name] = round(shipping_price, 2)
-        json.dump(sellers_database, Path("sellers_database.json").open("w"), indent=2)
     else:
         shipping_price = sellers_database[seller_name]
         total_price = price + shipping_price
@@ -252,24 +251,24 @@ with keep.presenting():
     text_box.clear()
     text_box.send_keys(args.username)
 
-    text_box = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@name='userPassword']")))
+    text_box = WebDriverWait(driver, 1).until(EC.element_to_be_clickable((By.XPATH, "//input[@name='userPassword']")))
     text_box.clear()
     text_box.send_keys(args.password)
 
-    login_button = WebDriverWait(driver, 10).until(
+    login_button = WebDriverWait(driver, 1).until(
         EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and contains(@class,'btn')]"))
     )
     login_button.click()
-    account_dropdown = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "account-dropdown")))
+    account_dropdown = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "account-dropdown")))
     logged_in_username = account_dropdown.find_element(By.XPATH, ".//span[@class='d-none d-lg-block']").text
     print(f"Login successful! Logged in as: {logged_in_username}")
+
+    if get_cart_price(driver) != 0:
+        empty_cart(driver, ret=False)
 
     offers_database: dict[str, list[dict[str, int | float | str]]] = {}
     if Path("offers_database.json").is_file():
         offers_database = json.load(Path("offers_database.json").open())
-
-    if get_cart_price(driver) != 0:
-        empty_cart(driver, ret=False)
 
     for card_num, card_name in enumerate(card_list, start=1):
         # --- Step 1: Search for card ---
@@ -284,25 +283,23 @@ with keep.presenting():
         search_box.clear()
         search_box.send_keys(card_name)
 
-        checkbox = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//input[@name='exactMatch']"))
-        )
+        checkbox = WebDriverWait(driver, 1).until(EC.element_to_be_clickable((By.XPATH, "//input[@name='exactMatch']")))
         if not checkbox.is_selected():
             checkbox.click()
 
-        checkbox = WebDriverWait(driver, 10).until(
+        checkbox = WebDriverWait(driver, 1).until(
             EC.element_to_be_clickable((By.XPATH, "//input[@name='onlyAvailable']"))
         )
         if not checkbox.is_selected():
             checkbox.click()
 
-        dropdown_element = WebDriverWait(driver, 10).until(
+        dropdown_element = WebDriverWait(driver, 1).until(
             EC.element_to_be_clickable((By.XPATH, "//select[@name='sortBy']"))
         )
         select = Select(dropdown_element)
         select.select_by_value("price_asc")
 
-        search_button = WebDriverWait(driver, 10).until(
+        search_button = WebDriverWait(driver, 1).until(
             EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @value='Search']"))
         )
         search_button.click()
@@ -310,7 +307,7 @@ with keep.presenting():
         # --- Step 2: Collect card urls ---
         excluded_rarities = {"Special", "Token", "Code Card", "Tip Card"}
 
-        rows = WebDriverWait(driver, 10).until(
+        rows = WebDriverWait(driver, 1).until(
             EC.presence_of_all_elements_located(
                 (By.XPATH, "//div[@class='table-body']/div[contains(@id,'productRow')]")
             )
@@ -356,6 +353,8 @@ with keep.presenting():
             card_urls_with_filters.append(card_url)
 
         # --- Step 3: Visit each card page to get all the offers ---
+        if card_name not in offers_database:
+            offers_database[card_name] = []
         editions_limit = min(args.max_editions, len(card_urls_with_filters))
         per_edition_limit = max(args.max_offers_per_edition, (args.max_total_offers // editions_limit))
         print(f"DEBUG: {editions_limit=} {per_edition_limit=}")
@@ -375,14 +374,10 @@ with keep.presenting():
             while len(offers) < per_edition_limit:
                 # Find all rows inside the offers table
                 if refresh_rows:
-                    WebDriverWait(driver, 10).until(
+                    table = WebDriverWait(driver, 10).until(
                         EC.presence_of_element_located((By.XPATH, "//section[@id='table']"))
                     )
-                    rows = WebDriverWait(driver, 10).until(
-                        EC.presence_of_all_elements_located(
-                            (By.XPATH, "//div[@class='table-body']/div[contains(@id, 'articleRow')]")
-                        )
-                    )
+                    rows = table.find_elements(By.XPATH, "//div[@class='table-body']/div[contains(@id, 'articleRow')]")
 
                 # Collect offer
                 try:
@@ -417,20 +412,21 @@ with keep.presenting():
                 total_amount_offers += 1
 
             if len(offers) > 0:
-                if card_name not in offers_database:
-                    offers_database[card_name] = []
                 offers_database[card_name].extend(dict(offer) for offer in offers)
 
             # Stop if we reach the limit.
             if edition_idx + 1 >= args.max_editions or total_amount_offers >= args.max_total_offers:
                 break
 
-        if get_cart_price(driver) != 0:
-            empty_cart(driver, ret=False)
-
+        # Uniquify offers.
         offers_database[card_name] = list(
             dict(offer) for offer in set(frozenset(offer.items()) for offer in offers_database[card_name])
         )
-        json.dump(offers_database, Path("offers_database.json").open("w"), indent=2)
+
+        json.dump(offers_database, Path("offers_database.json").open("w"), indent=2, sort_keys=True)
+        json.dump(sellers_database, Path("sellers_database.json").open("w"), indent=2, sort_keys=True)
+
+        if get_cart_price(driver) != 0:
+            empty_cart(driver, ret=False)
 
     driver.close()
