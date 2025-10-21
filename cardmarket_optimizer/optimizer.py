@@ -124,6 +124,7 @@ def run_algo(
 
 selected_offers, selected_sellers = run_algo(card_list, offers_database)
 
+
 # Get the sellers with only 1 item and try to see if we can reassign that item to a different, but already-selected seller
 # so that we can save the shipping of the current seller.
 
