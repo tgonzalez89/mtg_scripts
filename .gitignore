@@ -7,3 +7,4 @@ test*.png
 *.txt
 *.html
 __pycache__/
+*.csv

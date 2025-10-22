@@ -6,7 +6,7 @@ import re
 import urllib.request
 from pathlib import Path
 
-DEBUG_JSON = True  # Set to True to enable saving intermediate data as json files
+DEBUG_JSON = False  # Set to True to enable saving intermediate data as json files
 
 
 def parse_deck_id_arg(deck_id_list):
@@ -130,16 +130,32 @@ args = parse_args()
 # Get purchased cards.
 
 purchased_cards: dict[str, int] = {}
-if Path(args.purchased_file).is_file():
+if args.purchased_file is not None:
     with Path(args.purchased_file).open() as f:
         text = f.read()
-    pattern = re.compile(r"(.+?)\n\t\n\w+ (\d+)\n\t\1", re.DOTALL)
+    pattern = re.compile(r"([^\n]+)\s+\w+ (\d+)\s+\1", re.DOTALL)
     matches = pattern.findall(text)
-    for match in matches:
-        card_name = match[0].strip()
-        amount = match[1].strip()
-        card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
-        purchased_cards[card_name] = purchased_cards.get(card_name, 0) + int(amount)
+    if len(matches) > 0:
+        for match in matches:
+            card_name = match[0].strip()
+            amount = int(match[1].strip())
+            card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
+            purchased_cards[card_name] = purchased_cards.get(card_name, 0) + amount
+    else:
+        for line in text.splitlines():
+            pattern = re.compile(r"\s+")
+            line = pattern.sub(" ", line).strip()
+            card_name = line
+            amount = 1
+            parts = line.split(" ", maxsplit=1)
+            if len(parts) == 2:
+                if parts[0].isdigit():
+                    card_name = parts[1]
+                    amount = int(parts[0])
+            if len(card_name) > 0:
+                card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
+                purchased_cards[card_name] = purchased_cards.get(card_name, 0) + amount
+
 
 if DEBUG_JSON:
     json.dump(purchased_cards, Path("purchased.json").open("w"), indent=2, sort_keys=True)
