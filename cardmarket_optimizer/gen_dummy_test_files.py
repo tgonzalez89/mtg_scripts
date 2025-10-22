@@ -16,6 +16,9 @@ def generate_data(
     card_max_offers,
     buy_list_min_card_amount,
     buy_list_max_card_amount,
+    card_list_path,
+    sellers_database_path,
+    offers_database_path,
 ):
     # Validate input ranges
     assert 0 < seller_min_shipping_price <= seller_max_shipping_price <= 1000
@@ -30,7 +33,7 @@ def generate_data(
         for i in range(num_sellers)
     }
 
-    with open("sellers_database.json", "w") as f:
+    with open(sellers_database_path, "w") as f:
         json.dump(sellers_db, f, indent=2, sort_keys=True)
 
     # Generate offers_db
@@ -60,10 +63,10 @@ def generate_data(
         card_amount = random.randint(buy_list_min_card_amount, buy_list_max_card_amount)
         buy_list[card_name] = card_amount
 
-    with open("offers_database.json", "w") as f:
+    with open(offers_database_path, "w") as f:
         json.dump(offers_db, f, indent=2, sort_keys=True)
 
-    with open("card_list.txt", "w") as f:
+    with open(card_list_path, "w") as f:
         f.writelines(f"{amount} {card_name}\n" for card_name, amount in buy_list.items())
 
 
@@ -81,6 +84,25 @@ if __name__ == "__main__":
     parser.add_argument("--card-max-offers", type=int, required=True)
     parser.add_argument("--buy-list-min-card-amount", type=int, required=True)
     parser.add_argument("--buy-list-max-card-amount", type=int, required=True)
+    parser.add_argument("--buy-list-max-card-amount", type=int, required=True)
+    parser.add_argument(
+        "--card-list",
+        "-c",
+        default="card_list.txt",
+        help="Path to output text file containing the card list (default card_list.txt).",
+    )
+    parser.add_argument(
+        "--sellers-database",
+        "-s",
+        default="sellers_database.json",
+        help="Path to input sellers database file (default sellers_database.json).",
+    )
+    parser.add_argument(
+        "--offers-database",
+        "-o",
+        default="offers_database.json",
+        help="Path to input offers database file (default offers_database.json).",
+    )
 
     args = parser.parse_args()
 
@@ -97,4 +119,7 @@ if __name__ == "__main__":
         args.card_max_offers,
         args.buy_list_min_card_amount,
         args.buy_list_max_card_amount,
+        args.card_list,
+        args.sellers_database,
+        args.offers_database,
     )

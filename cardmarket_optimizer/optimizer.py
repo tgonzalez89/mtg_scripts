@@ -1,15 +1,63 @@
+import argparse
 import json
 import math
+import re
 from pathlib import Path
 
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--card-list",
+        "-c",
+        default="card_list.txt",
+        help="Path to input text file containing the card list (default card_list.txt).",
+    )
+    parser.add_argument(
+        "--sellers-database",
+        "-s",
+        default="sellers_database.json",
+        help="Path to input sellers database file (default sellers_database.json).",
+    )
+    parser.add_argument(
+        "--offers-database",
+        "-o",
+        default="offers_database.json",
+        help="Path to input offers database file (default offers_database.json).",
+    )
+    parser.add_argument(
+        "--selected-offers",
+        "-e",
+        default="selected_offers.json",
+        help="Path to output selected offers file (default selected_offers.json).",
+    )
+
+    args = parser.parse_args()
+    return args
+
+
+args = parse_args()
+
 card_list: dict[str, int] = {}
-for line in Path("card_list.txt").open().read().strip().split("\n"):
-    amount_str, card_name = line.split(" ", maxsplit=1)
-    card_list[card_name] = card_list.get(card_name, 0) + int(amount_str)
+with Path(args.card_list).open() as fp:
+    for line in fp:
+        pattern = re.compile(r"\s+")
+        line = pattern.sub(" ", line).strip()
+        card_name = line
+        amount = 1
+        parts = line.split(" ", maxsplit=1)
+        if len(parts) == 2:
+            if parts[0].isdigit():
+                card_name = parts[1]
+                amount = int(parts[0])
+        if len(card_name) > 0:
+            card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
+            card_list[card_name] = card_list.get(card_name, 0) + amount
 
-offers_database: dict[str, list[dict[str, int | float | str]]] = json.load(Path("offers_database.json").open())
+offers_database: dict[str, list[dict[str, int | float | str]]] = json.load(Path(args.offers_database).open())
 
-sellers_database: dict[str, float] = json.load(Path("sellers_database.json").open())
+sellers_database: dict[str, float] = json.load(Path(args.sellers_database).open())
 
 sellers_db_cards_available: dict[str, dict[str, int | float]] = {
     seller: {"shipping_price": shipping_price, "cards_available": 0}
@@ -149,9 +197,9 @@ for seller, offers in selected_offers_by_seller.items():
                     if len(sel_ofrs) == 0:
                         selected_offers.pop(card_name)
 
-offers_database = json.load(Path("offers_database.json").open())
+offers_database = json.load(Path(args.offers_database).open())
 
 selected_offers, selected_sellers = run_algo(new_card_list, offers_database, selected_offers, selected_sellers)
-json.dump(selected_offers, Path("selected_offers.json").open("w"), indent=2, sort_keys=True)
+json.dump(selected_offers, Path(args.selected_offers).open("w"), indent=2, sort_keys=True)
 total_price, items_price, shipping_price, sellers = calc_total_prices(selected_offers)
 print(f"{total_price=} {items_price=} {shipping_price=} {len(sellers)=}")

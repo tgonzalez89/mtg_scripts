@@ -33,40 +33,51 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--card-list", "-c", required=True, help="Path to a text file containing the card list (required)."
+        "--card-list",
+        "-c",
+        default="card_list.txt",
+        help="Path to input text file containing the card list (default card_list.txt).",
     )
-
     parser.add_argument("--username", "-u", required=True, help="Cardmarket username.")
-
     parser.add_argument("--password", "-p", required=True, help="Cardmarket password.")
-
     parser.add_argument(
         "--browser-profile",
         "-b",
         help="Path to Firefox profile. E.g. "
         r"C:\Users\<user>\AppData\Roaming\Firefox\Profiles\<random_string>.default-release",
     )
-
     parser.add_argument(
         "--max-editions",
         "-m",
         type=int,
-        default=10,
-        help="Max amount of editions that will be looked at, per wanted card.",
+        default=25,
+        help="Max amount of editions that will be looked at, per wanted card (default 25).",
     )
     parser.add_argument(
-        "--max-offers-per-edition",
+        "--min-offers-per-edition",
         "-x",
         type=int,
-        default=10,
-        help="Max amount of card offers that will be looked at, per card edition.",
+        default=25,
+        help="Min amount of card offers that will be looked at, per card edition (default 25).",
     )
     parser.add_argument(
         "--max-total-offers",
         "-t",
         type=int,
-        default=100,
-        help="Max amount of total card offers that will be looked at.",
+        default=500,
+        help="Max amount of total card offers that will be looked at (default 500).",
+    )
+    parser.add_argument(
+        "--sellers-database",
+        "-s",
+        default="sellers_database.json",
+        help="Path to output sellers database file (default sellers_database.json).",
+    )
+    parser.add_argument(
+        "--offers-database",
+        "-o",
+        default="offers_database.json",
+        help="Path to output offers database file (default offers_database.json).",
     )
 
     args = parser.parse_args()
@@ -88,11 +99,6 @@ def get_cart_price(driver):
         return 0.0
 
 
-sellers_database: dict[str, float] = {}
-if Path("sellers_database.json").is_file():
-    sellers_database = json.load(Path("sellers_database.json").open())
-
-
 def empty_cart(driver: WebDriver, ret=True):
     # Empty cart
     driver.get("https://www.cardmarket.com/en/Magic/ShoppingCart")
@@ -112,7 +118,7 @@ def empty_cart(driver: WebDriver, ret=True):
         driver.back()
 
 
-def get_row_data(row: WebElement):
+def get_row_data(row: WebElement, sellers_database: dict[str, float]):
     try:
         button = row.find_element(By.XPATH, ".//button[@aria-label='Put in shopping cart']")
     except NoSuchElementException:
@@ -233,10 +239,29 @@ def handle_alert(driver, timeout=1):
 with keep.presenting():
     args = parse_args()
 
+    sellers_database: dict[str, float] = {}
+    if Path(args.sellers_database).is_file():
+        sellers_database = json.load(Path(args.sellers_database).open())
+
+    offers_database: dict[str, list[dict[str, int | float | str]]] = {}
+    if Path(args.offers_database).is_file():
+        offers_database = json.load(Path(args.offers_database).open())
+
     card_list: dict[str, int] = {}
-    for line in Path(args.card_list).open().read().strip().split("\n"):
-        amount_str, card_name = line.split(" ", maxsplit=1)
-        card_list[card_name] = card_list.get(card_name, 0) + int(amount_str)
+    with Path(args.card_list).open() as fp:
+        for line in fp:
+            pattern = re.compile(r"\s+")
+            line = pattern.sub(" ", line).strip()
+            card_name = line
+            amount = 1
+            parts = line.split(" ", maxsplit=1)
+            if len(parts) == 2:
+                if parts[0].isdigit():
+                    card_name = parts[1]
+                    amount = int(parts[0])
+            if len(card_name) > 0:
+                card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
+                card_list[card_name] = card_list.get(card_name, 0) + amount
 
     options = Options()
     if args.browser_profile:
@@ -265,10 +290,6 @@ with keep.presenting():
 
     if get_cart_price(driver) != 0:
         empty_cart(driver, ret=False)
-
-    offers_database: dict[str, list[dict[str, int | float | str]]] = {}
-    if Path("offers_database.json").is_file():
-        offers_database = json.load(Path("offers_database.json").open())
 
     for card_num, card_name in enumerate(card_list, start=1):
         # --- Step 1: Search for card ---
@@ -356,8 +377,8 @@ with keep.presenting():
         if card_name not in offers_database:
             offers_database[card_name] = []
         editions_limit = min(args.max_editions, len(card_urls_with_filters))
-        per_edition_limit = max(args.max_offers_per_edition, (args.max_total_offers // editions_limit))
-        print(f"DEBUG: {editions_limit=} {per_edition_limit=}")
+        per_edition_limit = max(args.min_offers_per_edition, (args.max_total_offers // editions_limit))
+        # print(f"DEBUG: {editions_limit=} {per_edition_limit=}")
         total_amount_offers = 0
         for edition_idx, url in enumerate(card_urls_with_filters):
             url_parts = url.split("?", maxsplit=1)[0].split("/")
@@ -384,7 +405,7 @@ with keep.presenting():
                     row = rows[i]
                 except IndexError:
                     break
-                offer, clicked = get_row_data(row)
+                offer, clicked = get_row_data(row, sellers_database)
                 if offer is None and clicked:
                     # Error adding to cart, try again.
                     refresh_rows = True
@@ -423,8 +444,8 @@ with keep.presenting():
             dict(offer) for offer in set(frozenset(offer.items()) for offer in offers_database[card_name])
         )
 
-        json.dump(offers_database, Path("offers_database.json").open("w"), indent=2, sort_keys=True)
-        json.dump(sellers_database, Path("sellers_database.json").open("w"), indent=2, sort_keys=True)
+        json.dump(offers_database, Path(args.offers_database).open("w"), indent=2, sort_keys=True)
+        json.dump(sellers_database, Path(args.sellers_database).open("w"), indent=2, sort_keys=True)
 
         if get_cart_price(driver) != 0:
             empty_cart(driver, ret=False)
