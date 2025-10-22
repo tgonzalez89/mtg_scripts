@@ -1,5 +1,6 @@
 import argparse
 import re
+import time
 from pathlib import Path
 
 from selenium import webdriver
@@ -18,6 +19,32 @@ Steps to Locate Your Firefox Profile Folder:
 3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
 4. Under that profile, find the "Root Directory" path.
 """
+
+
+def split_string_evenly(text: str, max_per_group=100) -> list[list[str]]:
+    # Step 1: Split the string into lines
+    lines = text.splitlines()
+
+    n = len(lines)
+    if n == 0:
+        return []
+
+    # Step 2: Determine number of groups
+    num_groups = -(-n // max_per_group)  # ceiling division
+
+    # Step 3: Evenly divide lines into roughly equal-sized groups
+    base_size = n // num_groups
+    remainder = n % num_groups
+
+    groups: list[list[str]] = []
+    start = 0
+    for i in range(num_groups):
+        # Distribute remainder (the first 'remainder' groups get +1 item)
+        size = base_size + (1 if i < remainder else 0)
+        groups.append(lines[start : start + size])
+        start += size
+
+    return groups
 
 
 ALLOWED_LANGS = sorted({"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"})
@@ -129,7 +156,6 @@ def parse_args():
 
 args = parse_args()
 
-card_list = Path(args.card_list).open().read()
 
 options = Options()
 if args.browser_profile:
@@ -148,54 +174,57 @@ try:
 except Exception:
     pass
 
-# --- Step 1: Click the "Paste text" button ---
-paste_button = WebDriverWait(driver, 10).until(
-    EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'btn') and normalize-space(text())='Paste text']"))
-)
-paste_button.click()
-
-# --- Step 2: Wait for textarea and paste card list ---
-textarea = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//textarea[@type='text']")))
-textarea.clear()
-textarea.send_keys(card_list)
-
-# --- Step 3: Click the "Analyze text" button ---
-analyze_button = WebDriverWait(driver, 10).until(
-    EC.element_to_be_clickable(
-        (By.XPATH, "//button[contains(@class, 'btn') and normalize-space(text())='Analyze text']")
-    )
-)
-analyze_button.click()
-
-# --- Step 4: Wait for the result message ---
-message_div = WebDriverWait(driver, 10).until(
-    EC.presence_of_element_located(
-        (By.XPATH, "//div[contains(text(), 'will be imported') and contains(., 'will be ignored')]")
-    )
-)
-message_text = str(message_div.get_attribute("innerHTML"))
-match = re.search(r"(\d+) cards? will be imported.*(\d+) lines? will be ignored", message_text, flags=re.DOTALL)
-if match:
-    cards_imported = int(match.group(1))
-    lines_ignored = int(match.group(2))
-    if lines_ignored > 0:
-        print(f"Warning: {lines_ignored} card names were ignored.")
-    else:
-        print(f"{cards_imported} card names were be imported.")
-else:
-    raise RuntimeError(f"Couldn't find how many cards were correctly imported. {message_text=}")
-
-# --- Step 5: Click the "Import..." button ---
-import_button = WebDriverWait(driver, 10).until(
-    EC.element_to_be_clickable(
-        (By.XPATH, "//button[contains(@class, 'btn') and starts-with(normalize-space(text()), 'Import')]")
-    )
-)
-import_button.click()
-
-# --- Step 6: Click the "Match card printing" checkbox ---
+# --- Step 1: Click the "Match card printing" checkbox ---
 checkbox = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "only-identical-copies-checkbox")))
 checkbox.click()
+
+for chunck in split_string_evenly(Path(args.card_list).open().read()):
+    # --- Step 2: Click the "Paste text" button ---
+    paste_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(@class, 'btn') and normalize-space(text())='Paste text']")
+        )
+    )
+    paste_button.click()
+
+    # --- Step 3: Wait for textarea and paste card list ---
+    textarea = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//textarea[@type='text']")))
+    textarea.clear()
+    textarea.send_keys("\n".join(chunck))
+
+    # --- Step 4: Click the "Analyze text" button ---
+    analyze_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(@class, 'btn') and normalize-space(text())='Analyze text']")
+        )
+    )
+    analyze_button.click()
+
+    # --- Step 5: Wait for the result message ---
+    message_div = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located(
+            (By.XPATH, "//div[contains(text(), 'will be imported') and contains(., 'will be ignored')]")
+        )
+    )
+    message_text = str(message_div.get_attribute("innerHTML"))
+    match = re.search(r"(\d+) cards? will be imported.*(\d+) lines? will be ignored", message_text, flags=re.DOTALL)
+    if match:
+        cards_imported = int(match.group(1))
+        lines_ignored = int(match.group(2))
+        if lines_ignored > 0:
+            print(f"Warning: {lines_ignored} card names were ignored.")
+        else:
+            print(f"{cards_imported} card names were be imported.")
+    else:
+        raise RuntimeError(f"Couldn't find how many cards were correctly imported. {message_text=}")
+
+    # --- Step 6: Click the "Import..." button ---
+    import_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(@class, 'btn') and starts-with(normalize-space(text()), 'Import')]")
+        )
+    )
+    import_button.click()
 
 
 # --- Step 7: Select the appropriate settings for each card ---
@@ -284,6 +313,7 @@ def wait_for_optimizer():
     )
     buy_now_link = container.find_element(By.XPATH, ".//a[normalize-space(text())='Buy now']")
     WebDriverWait(driver, 300).until(lambda _: buy_now_link.get_attribute("disabled") is None)
+    driver.execute_script("window.scrollTo(0, 0);")
     actions = ActionChains(driver)
     actions.move_to_element(buy_now_link).perform()
 
@@ -294,6 +324,9 @@ def get_prices():
     # Find all card rows that have class 'deck-table-row' and attributes data-id and data-uuid
     card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
     for row in card_rows:
+        # Get quantity
+        name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__quantity > input")
+        quantity = int(str(name_span.get_attribute("value")))
         # Get card name
         name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__name > span")
         card_name = name_span.text.strip()
@@ -309,14 +342,14 @@ def get_prices():
             continue
         price_cents = int(round(price_float * 100))
         # Save card and price
-        cards[card_name] = price_cents
+        cards[card_name] = price_cents // quantity
     return cards
 
 
 # --- Step 11: Get the prices in all languages ---
 
 cards = {}
-
+time.sleep(1)
 for idx, language in enumerate(args.language_price_deltas):
     set_expansion(args.expansion_choice)
     set_language(language)
