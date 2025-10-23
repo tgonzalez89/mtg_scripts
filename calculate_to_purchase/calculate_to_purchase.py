@@ -231,23 +231,29 @@ for deck_id in args.want_deck_ids + args.have_deck_ids:
         if deck_id in args.have_deck_ids and card_name in have:
             if have[card_name] > amount:
                 # I have more than I need for the deck, subtract from have and don't add to cards_in_deck because I don't need copies of this card for this deck.
-                have[card_name] = have[card_name] - amount
+                have[card_name] -= amount
             elif have[card_name] == amount:
                 # I have the exact amount I need for the deck, remove card from have and don't add to cards_in_deck because I don't need copies of this card for this deck.
                 have.pop(card_name)
             else:
                 # I don't have enough copies, remove card from have and add to cards_in_deck the amount minus what I have (what I actually need).
+                # TODO: Maybe remove this following line. Adding cards to the 'need' list of owned decks might not be the intention of this
+                #       and might not be what users assume this will do.
                 cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount - have[card_name]
                 have.pop(card_name)
         else:
             cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
     for card_name, amount in maybeboard.items():
         if deck_id in args.have_deck_ids and card_name in have:
+            # Never remove cards from the 'have' list if they are in the maybeboard of a 'have' deck,
+            # since they are not being actively used by the deck.
             if amount > have[card_name]:
-                # I don't have enough copies, remove card from have and add to cards_in_deck the amount minus what I have (what I actually need).
+                # I don't have enough copies, remove card from have and add to considering_cards the amount minus what I have (what I actually need).
+                # TODO: Maybe remove this following line. Adding cards to the 'need' list of owned decks might not be the intention of this
+                #       and might not be what users assume this will do.
                 considering_cards[card_name] = considering_cards.get(card_name, 0) + amount - have[card_name]
-            # else: simply don't add to considering, this way the card will not be taken into account, since we already have it
-            #       this helps to not pollute the 'avoided' list
+            # else: Simply don't add to considering, this way the card will not be taken into account, since we already have it.
+            #       This helps to not pollute the 'avoided' list.
         else:
             considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
 

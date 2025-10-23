@@ -18,9 +18,10 @@ from pywinauto.keyboard import send_keys
 from wakepy import keep
 
 # TODO: Make it more generic, so that the number of players is flexible (2-4, maybe more?)
-
+# Document better how to setup Forge and that Adventure mode is the required mode, and to use windowed mode.
 
 # Config variables
+tesser_data = r"C:\Program Files\Tesseract-OCR\tessdata"
 VERBOSE = True  # Set to True to enable info messages
 DEBUG = True  # Set to True to enable debug messages
 DEBUG_IMG = True  # Set to True to enable saving debug screenshots.
@@ -180,9 +181,7 @@ def find_text_in_screen(pattern, region=None, screenshot=None, allowlist=None, f
     variables = {}
     if allowlist:
         variables["tessedit_char_whitelist"] = allowlist
-    with tesserocr.PyTessBaseAPI(
-        path=r"C:\Program Files\Tesseract-OCR\tessdata", psm=tesserocr.PSM.SINGLE_LINE, variables=variables
-    ) as tess_api:
+    with tesserocr.PyTessBaseAPI(path=tesser_data, psm=tesserocr.PSM.SINGLE_LINE, variables=variables) as tess_api:
         tess_api.SetImage(Image.fromarray(binary_image))
         ocr_text = tess_api.GetUTF8Text()
     normalized_ocr = normalize_text(ocr_text)
