@@ -75,6 +75,24 @@ def parse_args():
         help="Whether to buy cards in the considering pile.",
     )
 
+    parser.add_argument(
+        "--to-purchase-file",
+        default="to_purchase.txt",
+        help="Path to output file listing all cards to purchase (default: to_purchase.txt).",
+    )
+
+    parser.add_argument(
+        "--to-purchase-decks-file",
+        default="to_purchase_decks.txt",
+        help="Path to output file listing cards to purchase for decks (default: to_purchase_decks.txt).",
+    )
+
+    parser.add_argument(
+        "--to-purchase-considering-file",
+        default="to_purchase_considering.txt",
+        help="Path to output file listing cards to purchase from the considering pile (default: to_purchase_considering.txt).",
+    )
+
     args = parser.parse_args()
 
     args.want_deck_ids = parse_deck_id_arg(args.want_deck_ids)
@@ -230,31 +248,15 @@ for deck_id in args.want_deck_ids + args.have_deck_ids:
     for card_name, amount in main_deck.items():
         if deck_id in args.have_deck_ids and card_name in have:
             if have[card_name] > amount:
-                # I have more than I need for the deck, subtract from have and don't add to cards_in_deck because I don't need copies of this card for this deck.
+                # I have more than I am using for the deck. Subtract from 'have' the amount I'm using in the deck.
                 have[card_name] -= amount
-            elif have[card_name] == amount:
-                # I have the exact amount I need for the deck, remove card from have and don't add to cards_in_deck because I don't need copies of this card for this deck.
-                have.pop(card_name)
             else:
-                # I don't have enough copies, remove card from have and add to cards_in_deck the amount minus what I have (what I actually need).
-                # TODO: Maybe remove this following line. Adding cards to the 'need' list of owned decks might not be the intention of this
-                #       and might not be what users assume this will do.
-                cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount - have[card_name]
+                # I have the exact amount I need for the deck or less. Remove card from 'have'.
                 have.pop(card_name)
         else:
             cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
-    for card_name, amount in maybeboard.items():
-        if deck_id in args.have_deck_ids and card_name in have:
-            # Never remove cards from the 'have' list if they are in the maybeboard of a 'have' deck,
-            # since they are not being actively used by the deck.
-            if amount > have[card_name]:
-                # I don't have enough copies, remove card from have and add to considering_cards the amount minus what I have (what I actually need).
-                # TODO: Maybe remove this following line. Adding cards to the 'need' list of owned decks might not be the intention of this
-                #       and might not be what users assume this will do.
-                considering_cards[card_name] = considering_cards.get(card_name, 0) + amount - have[card_name]
-            # else: Simply don't add to considering, this way the card will not be taken into account, since we already have it.
-            #       This helps to not pollute the 'avoided' list.
-        else:
+    if deck_id not in args.have_deck_ids:
+        for card_name, amount in maybeboard.items():
             considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
 
 if DEBUG_JSON:
@@ -270,6 +272,10 @@ if args.buy_considering:
     for card_name, amount in considering_cards.items():
         if card_name not in need:
             # Only add 1 copy of each card from considering and only if it is not already in the decks.
+            # TODO: Rethink this. This works for Commander decks because they are singleton.
+            #       For normal decks we need the max amount found across maybeboards.
+            #       If there are more in some maybeboard than in each deck, we need to add the difference
+            #       between the max across maybeboards and the max across decks.
             need[card_name] = 1
             need_considering[card_name] = 1
 
@@ -307,7 +313,7 @@ if DEBUG_JSON:
     json.dump(avoided_owned, Path("avoided_owned.json").open("w"), indent=2, sort_keys=True)
     json.dump(avoided_purchased, Path("avoided_purchased.json").open("w"), indent=2, sort_keys=True)
 
-with Path("to_purchase.txt").open("w") as f:
+with Path(args.to_purchase).open("w") as f:
     for card_name, amount in sorted(to_purchase.items()):
         f.write(f"{amount} {card_name}\n")
 
@@ -319,7 +325,7 @@ for card_name, amount in need_decks.items():
         if have[card_name] < amount:
             to_purchase_decks[card_name] = amount - have[card_name]
 
-with Path("to_purchase_decks.txt").open("w") as f:
+with Path(args.to_purchase_decks.txt).open("w") as f:
     for card_name, amount in sorted(to_purchase_decks.items()):
         f.write(f"{amount} {card_name}\n")
 
@@ -331,6 +337,7 @@ for card_name, amount in need_considering.items():
         if have[card_name] < amount:
             to_purchase_considering[card_name] = amount - have[card_name]
 
-with Path("to_purchase_considering.txt").open("w") as f:
-    for card_name, amount in sorted(to_purchase_considering.items()):
-        f.write(f"{amount} {card_name}\n")
+if args.buy_considering:
+    with Path(args.to_purchase_considering.txt).open("w") as f:
+        for card_name, amount in sorted(to_purchase_considering.items()):
+            f.write(f"{amount} {card_name}\n")

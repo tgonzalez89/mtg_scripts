@@ -8,3 +8,4 @@ test*.png
 *.html
 __pycache__/
 *.csv
+!requirements.txt

@@ -1,0 +1,15 @@
+# build_base_deck
+pyedhrec
+# cardmarket_optimizer, cardtrader_optimizer
+selenium
+# cardmarket_optimizer, forge_auto_battler
+wakepy
+# forge_auto_battler
+opencv-python
+numpy
+pyautogui
+pillow
+pywinauto
+# NOTE: This can be tricky to install.
+# Follow the instructions at https://pypi.org/project/tesserocr/
+# tesserocr

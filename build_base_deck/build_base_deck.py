@@ -52,6 +52,10 @@ def parse_args():
         help="Vendor to use (default: cardkingdom).",
     )
 
+    parser.add_argument(
+        "--output-card-list", "-o", default="card_list.txt", help="Output file with card list for deck."
+    )
+
     args = parser.parse_args()
 
     # Convert lists to tuples for consistency
@@ -190,8 +194,8 @@ cards_considering = [
     if occurrences <= 2 * len(args.themes) * len(args.commander_names)
 ]
 
-with Path("main_deck.txt").open("w") as fp:
+with Path(args.output_card_list).open("w") as fp:
+    fp.write("# MAIN DECK\n")
     fp.writelines(card_name + "\n" for card_name in sorted(cards_main_deck))
-
-with Path("considering.txt").open("w") as fp:
+    fp.write("\n# CONSIDERING\n")
     fp.writelines(card_name + "\n" for card_name in sorted(cards_considering))
