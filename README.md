@@ -205,7 +205,6 @@ C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<random_string>.default
 ### TO DO
 
 * Accept other browser profiles (Chrome, Edge, etc.).
-* Accept no profile at all. It still works, but won't save the card list to a wishlist
 
 
 
@@ -233,10 +232,15 @@ pip install <path_to_wheel_file>
 ```
 
 #### Tesseract Data Path
-Inside the script, update the `tesser_data` variable to point to your local Tesseract `tessdata` directory, for example:
+Inside the script, update the `tesser_data` variable to point to your local Tesseract `tessdata` directory.
+
+For example:
 ```
 tesser_data = r"C:\Program Files\Tesseract-OCR\tessdata"
 ```
+
+You can download the data from here: https://github.com/tesseract-ocr/tessdata.
+English language is the only one you need ([eng.traineddata](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)).
 
 ### Inputs
 

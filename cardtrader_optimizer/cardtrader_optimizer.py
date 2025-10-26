@@ -163,11 +163,11 @@ if args.browser_profile:
     options.add_argument(args.browser_profile)
 driver = webdriver.Firefox(options=options)
 
-# --- Step 0: Click the "Accept" button ---
+# --- Step 0: Click the "Accept" (cookies) button ---
 driver.get("https://www.cardtrader.com/wishlists/new")
 
 try:
-    accept_button = WebDriverWait(driver, 1).until(
+    accept_button = WebDriverWait(driver, 2).until(
         EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept']"))
     )
     accept_button.click()
@@ -236,7 +236,7 @@ def set_expansion(expn="Any"):
     for sel_elem in expansion_selects:
         select = Select(sel_elem)
         # if select.first_selected_option.get_attribute("value") != expn:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sel_elem)
+        driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
         try:
             select.select_by_value(expn)
         except Exception:
@@ -252,7 +252,7 @@ def set_language(lang="Any"):
     for sel_elem in language_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != lang:
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
             try:
                 select.select_by_value(lang)
             except Exception:
@@ -267,7 +267,7 @@ def set_condition(cond="Any"):
     for sel_elem in condition_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != cond:
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
             try:
                 select.select_by_value(cond)
             except Exception:
@@ -282,7 +282,7 @@ def set_foil(foil="Any"):
     for sel_elem in condition_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != foil:
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
             try:
                 select.select_by_value(foil)
             except Exception:

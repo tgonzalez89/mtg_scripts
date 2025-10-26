@@ -4,7 +4,8 @@ import re
 import time
 from pathlib import Path
 
-from filters import filters
+from common import get_cart_price, handle_alert  # type:ignore[import-not-found]
+from scraper_filters import filters  # type:ignore[import-not-found]
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
@@ -25,8 +26,7 @@ Steps to Locate Your Firefox Profile Folder:
 4. Under that profile, find the "Root Directory" path.
 """
 
-# TODO:
-# Skip sellers that only provide tracked shipping (expensive)
+# TODO: Skip sellers that only provide tracked shipping (it's expensive)
 
 
 def parse_args():
@@ -84,28 +84,13 @@ def parse_args():
     return args
 
 
-def get_cart_price(driver):
-    """Wait until cart price element is visible and return the float value."""
-    cart_price_el = WebDriverWait(driver, 1).until(
-        EC.presence_of_element_located((By.XPATH, "//a[@id='cart']//span[contains(text(),'€')]"))
-    )
-    cart_text = cart_price_el.text.strip()
-
-    # Extract numeric value
-    match = re.search(r"([\d,.]+)", cart_text)
-    if match:
-        return float(match.group(1).replace(".", "").replace(",", "."))
-    else:
-        return 0.0
-
-
 def empty_cart(driver: WebDriver, ret=True):
     # Empty cart
     driver.get("https://www.cardmarket.com/en/Magic/ShoppingCart")
     remove_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, "//input[@value='Remove all articles']"))
     )
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", remove_btn)
+    driver.execute_script("arguments[0].scrollIntoView(true);", remove_btn)
     remove_btn.click()
     # Wait for confirmation that cart is empty
     try:
@@ -159,7 +144,7 @@ def get_row_data(row: WebElement, sellers_database: dict[str, float]):
         # Get current cart price before clicking
         cart_price_before = get_cart_price(driver)
         # Click "Put in shopping cart"
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+        driver.execute_script("arguments[0].scrollIntoView(true);", button)
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable(button)).click()
         clicked = True
         alert_result = handle_alert(driver)
@@ -191,49 +176,6 @@ def get_row_data(row: WebElement, sellers_database: dict[str, float]):
         "condition": condition,
         "language": language,
     }, clicked
-
-
-def handle_alert(driver, timeout=1):
-    """
-    Wait for an alert message (success or error).
-    Closes it if found and returns:
-        True  -> success alert
-        False -> error alert
-        None  -> no alert found
-    """
-    try:
-        # Wait for any alert (success or error)
-        alert = WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//div[contains(@class,'alert') and contains(@class,'alert-dismissible')]")
-            )
-        )
-
-        # Determine if it's success or error
-        classes = alert.get_attribute("class")
-        is_success = "alert-success" in classes
-        is_error = "alert-danger" in classes
-
-        # Close the alert if possible
-        try:
-            close_button = alert.find_element(By.XPATH, ".//button[@data-bs-dismiss='alert']")
-            close_button.click()
-        except Exception:
-            pass  # Ignore if already closed or not found
-
-        if is_success:
-            # print("Success alert detected and closed.")
-            return True
-        elif is_error:
-            # print("Error alert detected and closed.")
-            return False
-        else:
-            # print("Unknown alert type detected and closed.")
-            return None
-
-    except Exception:
-        # print("No alert appeared within the timeout.")
-        return None
 
 
 with keep.presenting():
@@ -269,8 +211,16 @@ with keep.presenting():
         options.add_argument(args.browser_profile)
     driver = webdriver.Firefox(options=options)
 
-    # --- Step 0: Log in ---
+    # --- Step 0: Accept cookies and log in ---
     driver.get("https://www.cardmarket.com/en/Magic")
+
+    try:
+        accept_button = WebDriverWait(driver, 2).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(text())='Accept All Cookies']"))
+        )
+        accept_button.click()
+    except Exception:
+        pass
 
     text_box = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@name='username']")))
     text_box.clear()
@@ -281,7 +231,7 @@ with keep.presenting():
     text_box.send_keys(args.password)
 
     login_button = WebDriverWait(driver, 1).until(
-        EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and contains(@class,'btn')]"))
+        EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @title='Log in')]"))
     )
     login_button.click()
     account_dropdown = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "account-dropdown")))

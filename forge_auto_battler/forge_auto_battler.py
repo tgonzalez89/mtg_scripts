@@ -17,7 +17,8 @@ from pywinauto.findwindows import find_window
 from pywinauto.keyboard import send_keys
 from wakepy import keep
 
-# TODO: Make it more generic, so that the number of players is flexible (2-4, maybe more?)
+# TODO:
+# Make it more generic, so that the number of players is flexible (2-4, maybe more?)
 # Document better how to setup Forge and that Adventure mode is the required mode, and to use windowed mode.
 
 # Config variables
