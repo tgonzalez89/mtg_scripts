@@ -443,19 +443,19 @@ for iteration_num in range(4):
         match iteration_num:
             case 0:
                 # First iteration:
-                # Only add to cart groups of cards that: a) have 3 or more cards and b) the price of the cards is at least
-                # half the price of the shipping.
-                if summary["wanted-articles"] >= 3 and summary["articles-value"] >= (0.5 * summary["shipping-cost"]):
+                # Only add to cart groups of cards that: a) have 5 or more cards and
+                # b) the price of the cards is at least the price of the shipping.
+                if summary["wanted-articles"] >= 6 and summary["articles-value"] >= summary["shipping-cost"]:
                     add_seller = True
             case 1:
                 # Second iteration:
                 # Same as (1) but OR instead of AND (more flexible now).
-                if summary["wanted-articles"] >= 3 or summary["articles-value"] >= (0.5 * summary["shipping-cost"]):
+                if summary["wanted-articles"] >= 4 and summary["articles-value"] >= 0.5 * summary["shipping-cost"]:
                     add_seller = True
             case 2:
                 # Third iteration:
-                # Add only groups that have 2 or more cards.
-                if summary["wanted-articles"] >= 2:
+                # Add only groups that have 3 or more cards.
+                if summary["wanted-articles"] >= 2 and summary["articles-value"] >= 0.25 * summary["shipping-cost"]:
                     add_seller = True
             case 3:
                 # Fourth iteration:
@@ -496,7 +496,7 @@ for iteration_num in range(4):
         # Card name is in the 4th td (index 3).
         card_name_elem = tds[3]
         card_name = re.sub(r"\s*\(V\.\d+\)$", "", card_name_elem.text)
-        current_wants_list[card_name] = qty
+        current_wants_list[card_name] = int(qty)
     if DEBUG:
         print(f"DEBUG: {iteration_num=} {len(current_wants_list)=}")
         pprint(current_wants_list)

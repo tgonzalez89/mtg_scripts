@@ -229,30 +229,32 @@ for chunck in split_string_evenly(Path(args.card_list).open().read()):
 
 # --- Step 7: Select the appropriate settings for each card ---
 # --- Expansion dropdowns ---
-def set_expansion(expn="Any"):
+
+
+def _set_expansion(expn="Any"):
     if expn == "Any":
         expn = ""
     expansion_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="expansion"]')
     for sel_elem in expansion_selects:
         select = Select(sel_elem)
-        # if select.first_selected_option.get_attribute("value") != expn:
-        driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
-        try:
-            select.select_by_value(expn)
-        except Exception:
-            # print(f"Warning: Couldn't select expansion '{expn}'.")
-            pass
+        if select.first_selected_option.get_attribute("value") != expn:
+            driver.execute_script("arguments[0].scrollIntoView({'block':'center'});", sel_elem)
+            try:
+                select.select_by_value(expn)
+            except Exception:
+                # print(f"Warning: Couldn't select expansion '{expn}'.")
+                pass
 
 
 # --- Language dropdowns ---
-def set_language(lang="Any"):
+def _set_language(lang="Any"):
     if lang == "Any":
         lang = ""
     language_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="language"]')
     for sel_elem in language_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != lang:
-            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView({'block':'center'});", sel_elem)
             try:
                 select.select_by_value(lang)
             except Exception:
@@ -260,14 +262,14 @@ def set_language(lang="Any"):
 
 
 # --- Condition dropdowns ---
-def set_condition(cond="Any"):
+def _set_condition(cond="Any"):
     if cond == "Any":
         cond = ""
     condition_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="condition"]')
     for sel_elem in condition_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != cond:
-            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView({'block':'center'});", sel_elem)
             try:
                 select.select_by_value(cond)
             except Exception:
@@ -275,19 +277,132 @@ def set_condition(cond="Any"):
 
 
 # --- Foil dropdowns ---
-def set_foil(foil="Any"):
+def _set_foil(foil="Any"):
     if foil == "Any":
         foil = ""
     condition_selects = driver.find_elements(By.CSS_SELECTOR, 'select[name="foil"]')
     for sel_elem in condition_selects:
         select = Select(sel_elem)
         if select.first_selected_option.get_attribute("value") != foil:
-            driver.execute_script("arguments[0].scrollIntoView(true);", sel_elem)
+            driver.execute_script("arguments[0].scrollIntoView({'block':'center'});", sel_elem)
             try:
                 select.select_by_value(foil)
             except Exception:
                 # print(f"Warning: Couldn't select foil '{foil}'.")
                 pass
+
+
+def check_select_all(driver, select=True, timeout=10):
+    """Check the 'check_all' checkbox if it isn't already checked."""
+    header = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'deck-table-header')]"))
+    )
+    wait = WebDriverWait(header, timeout)
+
+    # Wait for checkbox to be present and interactable
+    checkbox = wait.until(EC.element_to_be_clickable((By.NAME, "check_all")))
+    driver.execute_script("window.scrollTo(0, 0);")
+
+    if not checkbox.is_selected() and select:
+        checkbox.click()
+    elif checkbox.is_selected() and not select:
+        checkbox.click()
+    time.sleep(0.5)
+
+
+def set_expansion(option_text, timeout=10):
+    """Select an Expansion option like '(RVR) Ravnica Remastered'."""
+    check_select_all(driver)
+    header = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'deck-table-header')]"))
+    )
+    wait = WebDriverWait(header, timeout)
+    # Click the dropdown button
+    expansion_button = wait.until(EC.element_to_be_clickable((By.ID, "setExpansionButton")))
+    driver.execute_script("window.scrollTo(0, 0);")
+    expansion_button.click()
+
+    # Wait for dropdown menu and select item
+    option = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//div[@aria-labelledby='setExpansionButton']//a[normalize-space()='{option_text}']")
+        )
+    )
+    option.click()
+    time.sleep(0.25)
+    check_select_all(driver, False)
+    time.sleep(0.25)
+    _set_expansion(option_text)
+
+
+def set_language(option_text, timeout=10):
+    """Select a Language option like 'EN', 'FR', or 'Any'."""
+    check_select_all(driver)
+    option_text_upper = option_text.upper() if option_text != "Any" else option_text
+    header = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'deck-table-header')]"))
+    )
+    wait = WebDriverWait(header, timeout)
+    language_button = wait.until(EC.element_to_be_clickable((By.ID, "setLanguageButton")))
+    driver.execute_script("window.scrollTo(0, 0);")
+    language_button.click()
+
+    option = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//div[@aria-labelledby='setLanguageButton']//a[normalize-space()='{option_text_upper}']")
+        )
+    )
+    option.click()
+    time.sleep(0.25)
+    check_select_all(driver, False)
+    time.sleep(0.25)
+    _set_language(option_text)
+
+
+def set_condition(option_text, timeout=10):
+    """Select a Condition option like 'Near Mint' or 'Played'."""
+    check_select_all(driver)
+    header = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'deck-table-header')]"))
+    )
+    wait = WebDriverWait(header, timeout)
+    condition_button = wait.until(EC.element_to_be_clickable((By.ID, "setConditionButton")))
+    driver.execute_script("window.scrollTo(0, 0);")
+    condition_button.click()
+
+    option = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//div[@aria-labelledby='setConditionButton']//a[normalize-space()='{option_text}']")
+        )
+    )
+    option.click()
+    time.sleep(0.25)
+    check_select_all(driver, False)
+    time.sleep(0.25)
+    _set_condition(option_text)
+
+
+def set_foil(option_text, timeout=10):
+    """Select a Foil option like 'true', 'false', or 'Any'."""
+    check_select_all(driver)
+    header = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'deck-table-header')]"))
+    )
+    wait = WebDriverWait(header, timeout)
+    foil_button = wait.until(EC.element_to_be_clickable((By.ID, "setFoilButton")))
+    driver.execute_script("window.scrollTo(0, 0);")
+    foil_button.click()
+
+    option = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//div[@aria-labelledby='setFoilButton']//a[normalize-space()='{option_text}']")
+        )
+    )
+    option.click()
+    time.sleep(0.25)
+    check_select_all(driver, False)
+    time.sleep(0.25)
+    _set_foil(option_text)
 
 
 # --- Step 8: Click the "Optimize"/"Refresh" button ---
@@ -409,6 +524,7 @@ for language in args.language_price_deltas:
 
 # --- Step 13: Optimize cards using the chosen language ---
 set_expansion(args.expansion_choice)
+set_language(list(args.language_price_deltas.keys())[0])  # Set to first language as placeholder
 # Find all card rows with required attributes (same as before)
 card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
 for row in card_rows:
@@ -418,17 +534,25 @@ for row in card_rows:
     # Get chosen language for this card
     chosen_lang = cards_chosen_lang.get(card_name)
     if not chosen_lang:
-        print(f"Error: Couldn't find the chosen language for card {repr(card_name)}. Choosing EN as fallback.")
-        chosen_lang = "en"
+        print(
+            f"Error: Couldn't find the chosen language for card {repr(card_name)}. "
+            f"Choosing {list(args.language_price_deltas.keys())[0]} as fallback."
+        )
+        chosen_lang = list(args.language_price_deltas.keys())[0]
     # Find the language dropdown in this row
-    lang_select_element = row.find_element(By.CSS_SELECTOR, 'select[name="language"]')
-    select = Select(lang_select_element)
+    select_element = row.find_element(By.CSS_SELECTOR, 'select[name="language"]')
+    select = Select(select_element)
     # Change language if different from current value
-    if select.first_selected_option.get_attribute("value") != chosen_lang:
+    if str(select.first_selected_option.get_attribute("value")).lower() != chosen_lang.lower():
         try:
-            select.select_by_value(chosen_lang)
+            driver.execute_script("arguments[0].scrollIntoView({'block':'center'});", select_element)
+            select.select_by_value(chosen_lang if chosen_lang != "Any" else "")
         except Exception:
-            print(f"Error: Couldn't select the chosen language for card {repr(card_name)}. Selecting Any as fallback.")
+            print(
+                f"Error: Couldn't select the chosen language for card {repr(card_name)}. "
+                f"Selected {list(args.language_price_deltas.keys())[0]} as fallback."
+            )
+
 set_condition(args.condition)
 set_foil(args.foil_choice)
 click_button("'Refresh'")
