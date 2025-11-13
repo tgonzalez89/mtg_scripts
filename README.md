@@ -87,12 +87,12 @@ This script compares your owned and purchased cards against the cards required b
 
 ### Inputs
 
-* **Owned file**<br>
-  Path to the file containing your owned cards.<br>
+* **Collection file**<br>
+  Path to the file containing your the cards you own.<br>
   Export this file from [Moxfield collection](https://moxfield.com/collection) by going to **More → Export CSV**.<br>
 
 * **Purchased file**<br>
-  Path to the file listing cards you’ve already purchased.<br>
+  Path to the file listing cards you’ve already purchased but haven't received yet (effectively an extension of the collection file).<br>
   You can populate it by copy-pasting your list of cards from [CardTrader's orders](https://www.cardtrader.com/orders/buyer_future_order).<br>
 
 * **Want deck IDs**<br>
