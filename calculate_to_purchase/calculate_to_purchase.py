@@ -32,9 +32,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--owned-file",
-        "-o",
-        required=True,
+        "--collection-file",
+        "-c",
+        default="collection.csv",
         help=(
             "Path to the owned cards file (required). "
             "Export it from https://moxfield.com/collection (More -> Export CSV)."
@@ -49,6 +49,13 @@ def parse_args():
             "Path to the purchased cards file (default: purchased.txt). "
             "Populate by copy-pasting the list of cards from https://www.cardtrader.com/orders/buyer_future_order."
         ),
+    )
+
+    parser.add_argument(
+        "--filter-out-file",
+        "-f",
+        default="filter_out.txt",
+        help=("Path to file listing cards to filter out (default: filter_out.txt)."),
     )
 
     parser.add_argument(
@@ -175,12 +182,22 @@ if args.purchased_file is not None:
                 purchased_cards[card_name] = purchased_cards.get(card_name, 0) + amount
 
 
+filter_out_list: set[str] = set()
+if args.filter_out_file is not None:
+    with Path(args.filter_out_file).open() as fp:
+        for line in fp:
+            card_name = line.strip()
+            if len(card_name) > 0:
+                card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
+                filter_out_list.add(card_name)
+
+
 if DEBUG_JSON:
     json.dump(purchased_cards, Path("purchased.json").open("w"), indent=2, sort_keys=True)
 
 # Get owned cards.
 
-owned_cards = parse_owned_file(args.owned_file)
+owned_cards = parse_owned_file(args.collection_file)
 
 if DEBUG_JSON:
     json.dump(owned_cards, Path("owned.json").open("w"), indent=2, sort_keys=True)
@@ -254,10 +271,12 @@ for deck_id in args.want_deck_ids + args.have_deck_ids:
                 # I have the exact amount I need for the deck or less. Remove card from 'have'.
                 have.pop(card_name)
         else:
-            cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
+            if card_name not in filter_out_list:
+                cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
     if deck_id not in args.have_deck_ids:
         for card_name, amount in maybeboard.items():
-            considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
+            if card_name not in filter_out_list:
+                considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
 
 if DEBUG_JSON:
     json.dump(cards_in_decks, Path("in_decks.json").open("w"), indent=2, sort_keys=True)
@@ -313,7 +332,7 @@ if DEBUG_JSON:
     json.dump(avoided_owned, Path("avoided_owned.json").open("w"), indent=2, sort_keys=True)
     json.dump(avoided_purchased, Path("avoided_purchased.json").open("w"), indent=2, sort_keys=True)
 
-with Path(args.to_purchase).open("w") as f:
+with Path(args.to_purchase_file).open("w") as f:
     for card_name, amount in sorted(to_purchase.items()):
         f.write(f"{amount} {card_name}\n")
 
@@ -325,7 +344,7 @@ for card_name, amount in need_decks.items():
         if have[card_name] < amount:
             to_purchase_decks[card_name] = amount - have[card_name]
 
-with Path(args.to_purchase_decks.txt).open("w") as f:
+with Path(args.to_purchase_decks_file).open("w") as f:
     for card_name, amount in sorted(to_purchase_decks.items()):
         f.write(f"{amount} {card_name}\n")
 
@@ -338,6 +357,6 @@ for card_name, amount in need_considering.items():
             to_purchase_considering[card_name] = amount - have[card_name]
 
 if args.buy_considering:
-    with Path(args.to_purchase_considering.txt).open("w") as f:
+    with Path(args.to_purchase_considering_file).open("w") as f:
         for card_name, amount in sorted(to_purchase_considering.items()):
             f.write(f"{amount} {card_name}\n")

@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import time
 from pathlib import Path
@@ -441,7 +442,9 @@ def get_prices():
     for row in card_rows:
         # Get quantity
         name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__quantity > input")
-        quantity = int(str(name_span.get_attribute("value")))
+        quantity = int(
+            str(name_span.get_attribute("value"))
+        )  # TODO: Validate it's correct, sometimes there's not enough stock.
         # Get card name
         name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__name > span")
         card_name = name_span.text.strip()
@@ -474,6 +477,7 @@ for idx, language in enumerate(args.language_price_deltas):
     wait_for_optimizer()
     cards[language] = get_prices()
     print(f"cards[{language}]={cards[language]}")
+json.dump(cards, Path("card_prices_by_lang.json").open("w"), indent=2, sort_keys=True)
 
 # If only one language, no need to choose language per card and optimize.
 if len(args.language_price_deltas) == 1:
@@ -481,7 +485,7 @@ if len(args.language_price_deltas) == 1:
 
 
 # --- Step 12: Choose language by card ---
-def choose_languages(prices_by_lang, config):
+def choose_languages_old(prices_by_lang, config):
     chosen_languages = {}
     languages = list(config.keys())
 
@@ -490,33 +494,63 @@ def choose_languages(prices_by_lang, config):
         all_cards.update(lang_prices.keys())
 
     for card in all_cards:
-        current_lang = None
-        current_price = None
+        sel_lang = None
+        sel_price = None
 
         for i, lang in enumerate(languages):
             lang_prices = prices_by_lang.get(lang, {})
-            price = lang_prices.get(card)
-            if price is None:
+            cur_price = lang_prices.get(card)
+            if cur_price is None:
                 continue
 
-            if current_lang is None:
-                current_lang = lang
-                current_price = price
+            if sel_lang is None:
+                sel_lang = lang
+                sel_price = cur_price
             else:
                 threshold = config[lang]
                 # Compare new price to current price directly
-                if (current_price - price) >= threshold:
-                    current_lang = lang
-                    current_price = price
+                if (sel_price - cur_price) >= threshold:
+                    sel_lang = lang
+                    sel_price = cur_price
 
-        if current_lang is not None:
-            chosen_languages[card] = current_lang
+        if sel_lang is not None:
+            chosen_languages[card] = sel_lang
 
     return chosen_languages
 
 
+def choose_languages(prices_by_lang, config):
+    # Alternative algorithm.
+    # Calculate the delta between each language and the base language (first in config).
+    # If the delta is >= configured delta, and the price is lower than the current selected price, choose that language.
+    chosen_languages = {}
+    base_lang = list(config.keys())[0]
+    base_prices = prices_by_lang.get(base_lang, {})
+    all_cards = set()
+    for lang_prices in prices_by_lang.values():
+        all_cards.update(lang_prices.keys())
+    for card in all_cards:
+        sel_lang = base_lang
+        sel_price = base_prices.get(card, 100000000000)
+        for lang, delta in list(config.items())[1:]:
+            lang_prices = prices_by_lang.get(lang, {})
+            cur_price = lang_prices.get(card)
+            if cur_price is None:
+                continue
+            price_diff = base_prices.get(card, 100000000000) - cur_price
+            if price_diff >= delta and cur_price < sel_price:
+                sel_lang = lang
+                sel_price = cur_price
+        chosen_languages[card] = sel_lang
+    return chosen_languages
+
+
 cards_chosen_lang = choose_languages(cards, args.language_price_deltas)
+cards_by_lang: dict[str, list[str]] = {}
+for key, value in cards_chosen_lang.items():
+    cards_by_lang.setdefault(value, []).append(key)
 print(f"{cards_chosen_lang=}")
+json.dump(cards_chosen_lang, Path("chosen_languages.json").open("w"), indent=2, sort_keys=True)
 
 for language in args.language_price_deltas:
     print(f"Total in {language}    ({len(cards[language])} cards): {sum(cards[language].values())}")
@@ -560,3 +594,4 @@ wait_for_optimizer()
 cards_optimized = get_prices()
 print(f"{cards_optimized=}")
 print(f"Total optimized by language: {sum(cards_optimized.values())}")
+json.dump(cards_optimized, Path("final_card_prices.json").open("w"), indent=2, sort_keys=True)
