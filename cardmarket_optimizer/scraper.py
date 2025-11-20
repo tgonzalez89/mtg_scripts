@@ -90,8 +90,8 @@ def empty_cart(driver: WebDriver, ret=True):
     remove_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, "//input[@value='Remove all articles']"))
     )
-    driver.execute_script("arguments[0].scrollIntoView(true);", remove_btn)
-    remove_btn.click()
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", remove_btn)
+    driver.execute_script("arguments[0].click();", remove_btn)
     # Wait for confirmation that cart is empty
     try:
         WebDriverWait(driver, 10).until_not(
@@ -145,7 +145,8 @@ def get_row_data(row: WebElement, sellers_database: dict[str, float]):
         cart_price_before = get_cart_price(driver)
         # Click "Put in shopping cart"
         driver.execute_script("arguments[0].scrollIntoView(true);", button)
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable(button)).click()
+        WebDriverWait(driver, 10).until(EC.element_to_be_clickable(button))
+        driver.execute_script("arguments[0].click();", button)
         clicked = True
         alert_result = handle_alert(driver)
         # Wait for cart price to change
@@ -231,7 +232,7 @@ with keep.presenting():
     text_box.send_keys(args.password)
 
     login_button = WebDriverWait(driver, 1).until(
-        EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @title='Log in')]"))
+        EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @title='Log in']"))
     )
     login_button.click()
     account_dropdown = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "account-dropdown")))
