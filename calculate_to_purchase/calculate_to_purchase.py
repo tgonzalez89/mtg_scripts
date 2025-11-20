@@ -44,7 +44,6 @@ def parse_args():
     parser.add_argument(
         "--purchased-file",
         "-p",
-        default="purchased.txt",
         help=(
             "Path to the purchased cards file (default: purchased.txt). "
             "Populate by copy-pasting the list of cards from https://www.cardtrader.com/orders/buyer_future_order."
@@ -54,7 +53,6 @@ def parse_args():
     parser.add_argument(
         "--filter-out-file",
         "-f",
-        default="filter_out.txt",
         help=("Path to file listing cards to filter out (default: filter_out.txt)."),
     )
 
@@ -78,7 +76,6 @@ def parse_args():
         "--buy-considering",
         "-b",
         action="store_true",
-        default=True,
         help="Whether to buy cards in the considering pile.",
     )
 
@@ -262,21 +259,23 @@ for deck_id in args.want_deck_ids + args.have_deck_ids:
     else:
         main_deck, maybeboard = download_deck(deck_id)
 
-    for card_name, amount in main_deck.items():
-        if deck_id in args.have_deck_ids and card_name in have:
+    if deck_id in args.want_deck_ids:
+        for card_name, amount in main_deck.items():
+            if card_name not in filter_out_list:
+                cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
+        for card_name, amount in maybeboard.items():
+            if card_name not in filter_out_list:
+                considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
+    if deck_id in args.have_deck_ids:
+        for card_name, amount in main_deck.items():
+            if card_name not in have:
+                continue
             if have[card_name] > amount:
                 # I have more than I am using for the deck. Subtract from 'have' the amount I'm using in the deck.
                 have[card_name] -= amount
             else:
                 # I have the exact amount I need for the deck or less. Remove card from 'have'.
                 have.pop(card_name)
-        else:
-            if card_name not in filter_out_list:
-                cards_in_decks[card_name] = cards_in_decks.get(card_name, 0) + amount
-    if deck_id not in args.have_deck_ids:
-        for card_name, amount in maybeboard.items():
-            if card_name not in filter_out_list:
-                considering_cards[card_name] = considering_cards.get(card_name, 0) + amount
 
 if DEBUG_JSON:
     json.dump(cards_in_decks, Path("in_decks.json").open("w"), indent=2, sort_keys=True)
