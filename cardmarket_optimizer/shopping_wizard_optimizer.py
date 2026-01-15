@@ -40,7 +40,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from shopping_wizard_optimizer_filter import filters  # type:ignore[import-not-found]
 
-DEBUG = False
+DEBUG = True
 
 # CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
 
@@ -243,8 +243,9 @@ shopping_cart_details_per_seller: dict[str, list[dict[str, int | float | str | N
   ...
 }
 """
-
-for iteration_num in range(4):
+cart_has_items = True
+iteration_num = 0
+while cart_has_items:
     print(f"\n=== Iteration {iteration_num + 1} ===")
     # --- Step 1: Go to Shopping Wizard for the Wants List ---
     driver.get(f"https://www.cardmarket.com/en/Magic/Wants/ShoppingWizard?idWantsList={args.wants_list_id}")
@@ -438,39 +439,50 @@ for iteration_num in range(4):
 
     # --- Step 6: Add to cart sellers with good value ---
     cards_added_to_cart: dict[str, int] = {}
-    for seller_name, summary in summaries_per_seller.items():
-        add_seller = False
-        match iteration_num:
-            case 0:
-                # First iteration:
-                # Only add to cart groups of cards that: a) have 5 or more cards and
-                # b) the price of the cards is at least the price of the shipping.
-                if summary["wanted-articles"] >= 6 and summary["articles-value"] >= summary["shipping-cost"]:
+    strategy = 0
+    sellers_added = 0
+    while not cards_added_to_cart:
+        for seller_name, summary in summaries_per_seller.items():
+            add_seller = False
+            match strategy:
+                case 0:
+                    # Only add to cart groups of cards that:
+                    # a) have 4 or more cards AND
+                    # b) the price of the cards is at least the price of the shipping
+                    if summary["wanted-articles"] >= 4 and summary["articles-value"] >= summary["shipping-cost"]:
+                        add_seller = True
+                case 1:
+                    # Same as (0) but OR instead of AND (more flexible now).
+                    if summary["wanted-articles"] >= 4 or summary["articles-value"] >= summary["shipping-cost"]:
+                        add_seller = True
+                case 2:
+                    # Same as (0) but with 2 or more cards and half the shipping cost.
+                    if summary["wanted-articles"] >= 2 and summary["articles-value"] >= 0.5 * summary["shipping-cost"]:
+                        add_seller = True
+                case 3:
+                    # Same as (2) but OR instead of AND (more flexible now).
+                    if summary["wanted-articles"] >= 2 or summary["articles-value"] >= 0.5 * summary["shipping-cost"]:
+                        add_seller = True
+                case _:
+                    # No filters. By this point there's not much we can do.
                     add_seller = True
-            case 1:
-                # Second iteration:
-                # Same as (1) but OR instead of AND (more flexible now).
-                if summary["wanted-articles"] >= 4 and summary["articles-value"] >= 0.5 * summary["shipping-cost"]:
-                    add_seller = True
-            case 2:
-                # Third iteration:
-                # Add only groups that have 3 or more cards.
-                if summary["wanted-articles"] >= 2 and summary["articles-value"] >= 0.25 * summary["shipping-cost"]:
-                    add_seller = True
-            case 3:
-                # Fourth iteration:
-                # No filters. By this point there's not much we can do.
-                add_seller = True
-        if add_seller:
-            print(
-                f"Adding {len(results_details_per_seller[iteration_num][seller_name])} articles to cart from seller '{seller_name}'."
-            )
-            add_seller_to_cart(driver, seller_name)
-            for article in results_details_per_seller[iteration_num][seller_name]:
-                assert isinstance(article["quantity"], int)
-                cards_added_to_cart[str(article["card_name"])] = cards_added_to_cart.get(
-                    str(article["card_name"]), 0
-                ) + int(article["quantity"])
+            if add_seller:
+                sellers_added += 1
+                print(
+                    f"Adding {len(results_details_per_seller[iteration_num][seller_name])} articles to cart from seller '{seller_name}'. Used strategy {strategy}."
+                )
+                add_seller_to_cart(driver, seller_name)
+                for article in results_details_per_seller[iteration_num][seller_name]:
+                    assert isinstance(article["quantity"], int)
+                    cards_added_to_cart[str(article["card_name"])] = cards_added_to_cart.get(
+                        str(article["card_name"]), 0
+                    ) + int(article["quantity"])
+        strategy += 1
+
+    if sellers_added == len(summaries_per_seller):
+        print(f"DEBUG: {results_details_per_seller[iteration_num]=}")
+        print(f"DEBUG: {summaries_per_seller=}")
+        cart_has_items = False
 
     if DEBUG:
         print(f"DEBUG: {iteration_num=} {len(cards_added_to_cart)=}")
@@ -513,6 +525,11 @@ for iteration_num in range(4):
         pprint(new_wants_list)
     print(f"Removing {len(cards_added_to_cart)} elements rom Wants List that were added to the cart.")
     print(f"Filtered Wants List will now have {len(new_wants_list)} elements.")
+
+    # TODO: Change methodology.
+    # Instead of removing all cards and re-adding the new, smaller wants list,
+    # only remove the cards that were added to the cart.
+    # This way we avoid losing the filters already set in the cards in the wants list.
 
     # Select all cards by selecting the "check all" checkbox
     checkbox = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@name='checkAll']")))
@@ -557,6 +574,8 @@ for iteration_num in range(4):
         )
     except TimeoutException:
         print("Warning: No success alert after adding new wants list.")
+
+    iteration_num += 1
 
 # --- Step 8: Show a comparison of the prices before and after the optimizer ---
 driver.get("https://www.cardmarket.com/en/Magic/ShoppingCart")

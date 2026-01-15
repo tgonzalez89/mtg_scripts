@@ -42,6 +42,6 @@ filters = {
         # 1,  # Professional
         # 2,  # Powerseller
     ],
-    "sellerReputation": 4,  # 1=Outstanding | 2=Very good | 3=Good | 4=Average | 5=Bad
+    "sellerReputation": 5,  # 1=Outstanding | 2=Very good | 3=Good | 4=Average | 5=Bad
     "maxShippingTime": 7,  # 3=Very Fast (2 to 3 days) | 6=Fast (4 to 6 days) | 7=Regular (7+ days)
 }
