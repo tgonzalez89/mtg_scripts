@@ -51,15 +51,15 @@ def split_string_evenly(text: str, max_per_group=100) -> list[list[str]]:
 ALLOWED_LANGS = sorted({"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"})
 
 
-def parse_language_deltas(arg_value: str) -> dict[str, int]:
+def parse_language_thresholds(arg_value: str) -> dict[str, int]:
     """
-    Parse and validate a language:delta list such as:
+    Parse and validate a language:threshold list such as:
     'en:0,es:25,pt:50,it:50'
 
     Validation rules:
     - If not provided, default is {"Any": 0}
-    - The first language must have delta == 0
-    - Deltas must be integers >= 1, except for the first one
+    - The first language must have threshold == 0
+    - Thresholds must be integers >= 1, except for the first one
     - No repeated languages
     - "Any" can only appear as the last language
     """
@@ -67,43 +67,45 @@ def parse_language_deltas(arg_value: str) -> dict[str, int]:
         return {"Any": 0}
 
     pairs = [p.strip() for p in arg_value.split(",") if p.strip()]
-    lang_delta = {}
+    lang_threshold = {}
 
     for i, pair in enumerate(pairs):
         if ":" not in pair:
-            raise argparse.ArgumentTypeError(f"Invalid format for language:delta '{pair}'. Expected 'lang:int'.")
+            raise argparse.ArgumentTypeError(f"Invalid format for language:threshold '{pair}'. Expected 'lang:int'.")
 
-        lang, delta_str = pair.split(":", 1)
+        lang, threshold_str = pair.split(":", 1)
 
-        delta_str = delta_str.strip()
-        # Validate delta is integer
-        if not delta_str.isdigit():
-            raise argparse.ArgumentTypeError(f"Delta for language '{lang}' must be an integer (got '{delta_str}').")
-        delta = int(delta_str)
-        # Validate delta value for first element
-        if i == 0 and delta != 0:
-            raise argparse.ArgumentTypeError(f"The first language ('{lang}') must have a delta of 0.")
-        # Validate delta value for non-first elements
-        if i > 0 and delta < 1:
-            raise argparse.ArgumentTypeError(f"Language '{lang}' must have a positive delta (>=1).")
+        threshold_str = threshold_str.strip()
+        # Validate threshold is integer
+        if not threshold_str.isdigit():
+            raise argparse.ArgumentTypeError(
+                f"threshold for language '{lang}' must be an integer (got '{threshold_str}')."
+            )
+        threshold = int(threshold_str)
+        # Validate threshold value for first element
+        if i == 0 and threshold != 0:
+            raise argparse.ArgumentTypeError(f"The first language ('{lang}') must have a threshold of 0.")
+        # Validate threshold value for non-first elements
+        if i > 0 and threshold < 1:
+            raise argparse.ArgumentTypeError(f"Language '{lang}' must have a positive threshold (>=1).")
 
         lang = lang.strip()
         # Validate if allowed lang
         if lang not in ALLOWED_LANGS:
             raise argparse.ArgumentTypeError(f"Language '{lang}' is not allowed. Allowed: {ALLOWED_LANGS}.")
         # Validate lang duplicates
-        if lang in lang_delta:
+        if lang in lang_threshold:
             raise argparse.ArgumentTypeError(f"Duplicate language '{lang}' found.")
         # "Any" only allowed as last lang
         if lang == "Any" and i != len(pairs) - 1:
             raise argparse.ArgumentTypeError("'Any' language may only appear as the last entry.")
 
-        lang_delta[lang] = delta
+        lang_threshold[lang] = threshold
 
-    if not lang_delta:
+    if not lang_threshold:
         raise argparse.ArgumentTypeError("Can't be empty.")
 
-    return lang_delta
+    return lang_threshold
 
 
 def parse_args():
@@ -116,11 +118,7 @@ def parse_args():
     parser.add_argument("--expansion-choice", "-e", default="Any", help="Expansion filter (default: Any).")
 
     parser.add_argument(
-        "--foil-choice",
-        "-f",
-        choices=["Any", "Yes", "No"],
-        default="Any",
-        help="Foil filter (default: Any).",
+        "--foil-choice", "-f", choices=["Any", "Yes", "No"], default="Any", help="Foil filter (default: Any)."
     )
 
     parser.add_argument(
@@ -132,12 +130,12 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--language-price-deltas",
+        "--language-price-thresholds",
         "-l",
-        type=parse_language_deltas,
+        type=parse_language_thresholds,
         default={"Any": 0},
         help=(
-            "Language price deltas in cents. Format example: 'en:0,es:25,pt:50'. First must be 0, 'Any' only allowed last. "
+            "Language price thresholds in cents. Format example: 'en:0,es:25,pt:50'. First must be 0, 'Any' only allowed last. "
             f"Allowed languages: {{{','.join(lang for lang in ALLOWED_LANGS)}}}. "
             "(default: 'Any:0')"
         ),
@@ -196,7 +194,10 @@ for chunck in split_string_evenly(Path(args.card_list).open().read()):
     # --- Step 4: Click the "Analyze text" button ---
     analyze_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable(
-            (By.XPATH, "//button[contains(@class, 'btn') and normalize-space(text())='Analyze text']")
+            (
+                By.XPATH,
+                "//button[contains(@class, 'btn') and normalize-space(text())='Analyze text']",
+            )
         )
     )
     analyze_button.click()
@@ -204,11 +205,18 @@ for chunck in split_string_evenly(Path(args.card_list).open().read()):
     # --- Step 5: Wait for the result message ---
     message_div = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located(
-            (By.XPATH, "//div[contains(text(), 'will be imported') and contains(., 'will be ignored')]")
+            (
+                By.XPATH,
+                "//div[contains(text(), 'will be imported') and contains(., 'will be ignored')]",
+            )
         )
     )
     message_text = str(message_div.get_attribute("innerHTML"))
-    match = re.search(r"(\d+) cards? will be imported.*(\d+) lines? will be ignored", message_text, flags=re.DOTALL)
+    match = re.search(
+        r"(\d+) cards? will be imported.*(\d+) lines? will be ignored",
+        message_text,
+        flags=re.DOTALL,
+    )
     if match:
         cards_imported = int(match.group(1))
         lines_ignored = int(match.group(2))
@@ -222,7 +230,10 @@ for chunck in split_string_evenly(Path(args.card_list).open().read()):
     # --- Step 6: Click the "Import..." button ---
     import_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable(
-            (By.XPATH, "//button[contains(@class, 'btn') and starts-with(normalize-space(text()), 'Import')]")
+            (
+                By.XPATH,
+                "//button[contains(@class, 'btn') and starts-with(normalize-space(text()), 'Import')]",
+            )
         )
     )
     import_button.click()
@@ -326,7 +337,10 @@ def set_expansion(option_text, timeout=10):
     # Wait for dropdown menu and select item
     option = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, f"//div[@aria-labelledby='setExpansionButton']//a[normalize-space()='{option_text}']")
+            (
+                By.XPATH,
+                f"//div[@aria-labelledby='setExpansionButton']//a[normalize-space()='{option_text}']",
+            )
         )
     )
     option.click()
@@ -350,7 +364,10 @@ def set_language(option_text, timeout=10):
 
     option = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, f"//div[@aria-labelledby='setLanguageButton']//a[normalize-space()='{option_text_upper}']")
+            (
+                By.XPATH,
+                f"//div[@aria-labelledby='setLanguageButton']//a[normalize-space()='{option_text_upper}']",
+            )
         )
     )
     option.click()
@@ -373,7 +390,10 @@ def set_condition(option_text, timeout=10):
 
     option = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, f"//div[@aria-labelledby='setConditionButton']//a[normalize-space()='{option_text}']")
+            (
+                By.XPATH,
+                f"//div[@aria-labelledby='setConditionButton']//a[normalize-space()='{option_text}']",
+            )
         )
     )
     option.click()
@@ -396,7 +416,10 @@ def set_foil(option_text, timeout=10):
 
     option = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, f"//div[@aria-labelledby='setFoilButton']//a[normalize-space()='{option_text}']")
+            (
+                By.XPATH,
+                f"//div[@aria-labelledby='setFoilButton']//a[normalize-space()='{option_text}']",
+            )
         )
     )
     option.click()
@@ -410,7 +433,10 @@ def set_foil(option_text, timeout=10):
 def click_button(button_name):
     optimize_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable(
-            (By.XPATH, f"//button[contains(@class, 'btn') and contains(normalize-space(.), {button_name})]")
+            (
+                By.XPATH,
+                f"//button[contains(@class, 'btn') and contains(normalize-space(.), {button_name})]",
+            )
         )
     )
     driver.execute_script("window.scrollTo(0, 0);")
@@ -432,13 +458,17 @@ def wait_for_optimizer():
     driver.execute_script("window.scrollTo(0, 0);")
     actions = ActionChains(driver)
     actions.move_to_element(buy_now_link).perform()
+    time.sleep(0.5)
 
 
 # --- Step 10: Get the prices ---
 def get_prices():
     cards = {}
     # Find all card rows that have class 'deck-table-row' and attributes data-id and data-uuid
-    card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
+    card_rows = driver.find_elements(
+        By.XPATH,
+        "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]",
+    )
     for row in card_rows:
         # Get quantity
         name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__quantity > input")
@@ -464,30 +494,63 @@ def get_prices():
     return cards
 
 
+def get_prices2():
+    cards = {}
+
+    rows = driver.find_elements(By.CSS_SELECTOR, ".deck-table-row[data-id][data-uuid]")
+
+    for row in rows:
+        # quantity
+        try:
+            quantity = int(row.find_element(By.CSS_SELECTOR, ".deck-table-row__quantity input").get_attribute("value"))
+        except ValueError:
+            quantity = 0
+        if quantity <= 0:
+            continue
+
+        # name
+        card_name = row.find_element(By.CSS_SELECTOR, ".deck-table-row__name span").text.strip()
+
+        # price
+        price_text = row.find_element(By.CSS_SELECTOR, ".deck-table-row__price .text-right").text.strip()
+        price_value = price_text.replace("€", "").replace("\xa0", "").replace(",", ".").strip()
+
+        try:
+            price_cents = int(round(float(price_value) * 100))
+        except ValueError:
+            print(f"Warning: Couldn't get price for card {card_name!r}.")
+            continue
+
+        cards[card_name] = price_cents // quantity
+
+    return cards
+
+
 # --- Step 11: Get the prices in all languages ---
 
 cards = {}
 time.sleep(1)
-for idx, language in enumerate(args.language_price_deltas):
+for idx, language in enumerate(args.language_price_thresholds):
     set_expansion(args.expansion_choice)
     set_language(language)
     set_condition(args.condition)
     set_foil(args.foil_choice)
     click_button("'Optimize'" if idx == 0 else "'Refresh'")
     wait_for_optimizer()
-    cards[language] = get_prices()
+    cards[language] = get_prices2()
     print(f"cards[{language}]={cards[language]}")
 json.dump(cards, Path("card_prices_by_lang.json").open("w"), indent=2, sort_keys=True)
 
 # If only one language, no need to choose language per card and optimize.
-if len(args.language_price_deltas) == 1:
+if len(args.language_price_thresholds) == 1:
     exit()
 
 
 # --- Step 12: Choose language by card ---
-def choose_languages_old(prices_by_lang, config):
+def choose_languages1(prices_by_lang, config):
+    # Calculate the price diff for each language and the currently selected language.
+    # If the price diff is >= price diff threshold, choose that language.
     chosen_languages = {}
-    languages = list(config.keys())
 
     all_cards = set()
     for lang_prices in prices_by_lang.values():
@@ -496,83 +559,123 @@ def choose_languages_old(prices_by_lang, config):
     for card in all_cards:
         sel_lang = None
         sel_price = None
-
-        for i, lang in enumerate(languages):
-            lang_prices = prices_by_lang.get(lang, {})
-            cur_price = lang_prices.get(card)
-            if cur_price is None:
+        for lang, threshold in config.items():
+            price = prices_by_lang.get(lang, {}).get(card)
+            if price is None:
                 continue
-
-            if sel_lang is None:
+            if sel_lang is None or sel_price is None:
                 sel_lang = lang
-                sel_price = cur_price
-            else:
-                threshold = config[lang]
-                # Compare new price to current price directly
-                if (sel_price - cur_price) >= threshold:
-                    sel_lang = lang
-                    sel_price = cur_price
-
+                sel_price = price
+                continue
+            price_diff = sel_price - price
+            if price_diff >= threshold:
+                sel_lang = lang
+                sel_price = price
         if sel_lang is not None:
             chosen_languages[card] = sel_lang
 
     return chosen_languages
 
 
-def choose_languages(prices_by_lang, config):
-    # Alternative algorithm.
-    # Calculate the delta between each language and the base language (first in config).
-    # If the delta is >= configured delta, and the price is lower than the current selected price, choose that language.
+def choose_languages2(prices_by_lang, config):
+    # Calculate the price diff for each language and the base language (first in config).
+    # If the price diff is >= price diff threshold and the price is < the currently selected price,
+    # choose that language.
     chosen_languages = {}
+
     base_lang = list(config.keys())[0]
     base_prices = prices_by_lang.get(base_lang, {})
     all_cards = set()
     for lang_prices in prices_by_lang.values():
         all_cards.update(lang_prices.keys())
+
     for card in all_cards:
         sel_lang = base_lang
-        sel_price = base_prices.get(card, 100000000000)
-        for lang, delta in list(config.items())[1:]:
-            lang_prices = prices_by_lang.get(lang, {})
-            cur_price = lang_prices.get(card)
-            if cur_price is None:
+        sel_price = base_prices.get(card, 1000000000)
+        for lang, threshold in list(config.items())[1:]:
+            price = prices_by_lang.get(lang, {}).get(card)
+            if price is None:
                 continue
-            price_diff = base_prices.get(card, 100000000000) - cur_price
-            if price_diff >= delta and cur_price < sel_price:
+            price_diff = base_prices.get(card, 1000000000) - price
+            if price_diff >= threshold and price < sel_price:
                 sel_lang = lang
-                sel_price = cur_price
+                sel_price = price
         chosen_languages[card] = sel_lang
+
     return chosen_languages
 
 
-cards_chosen_lang = choose_languages(cards, args.language_price_deltas)
+def choose_languages3(prices_by_lang, config):
+    # Calculate the price diff (1) for each language and the currently selected language.
+    # Calculate the price diff (2) for each language and the base language (first in config).
+    # If the price diff 1 is >= price diff threshold and the price diff 2 is >= accumulated price diff threshold,
+    # chose that language.
+    chosen_languages = {}
+
+    base_lang = list(config.keys())[0]
+    base_prices = prices_by_lang.get(base_lang, {})
+    all_cards = set()
+    for lang_prices in prices_by_lang.values():
+        all_cards.update(lang_prices.keys())
+
+    for card in all_cards:
+        sel_lang = None
+        sel_price = None
+        accumulated_threshold = 0
+        for lang, threshold in config.items():
+            accumulated_threshold += threshold
+            price = prices_by_lang.get(lang, {}).get(card)
+            if price is None:
+                continue
+            if sel_lang is None or sel_price is None:
+                sel_lang = lang
+                sel_price = price
+                continue
+            price_diff_1 = sel_price - price
+            price_diff_2 = base_prices.get(card, 1000000000) - price
+            print(
+                f"[DEBUG] {card=} {sel_lang=} {lang=} {sel_price=} {price=} base_price={base_prices.get(card, 1000000000)} {price_diff_1=} {threshold=} {price_diff_2=} {accumulated_threshold=}"
+            )
+            if price_diff_1 >= threshold and price_diff_2 >= accumulated_threshold:
+                print(f"[DEBUG] Choosing language {lang!r}")
+                sel_lang = lang
+                sel_price = price
+            else:
+                print(f"[DEBUG] Not choosing language {lang!r}")
+        if sel_lang is not None:
+            chosen_languages[card] = sel_lang
+        print("")
+    return chosen_languages
+
+
+cards_chosen_lang = choose_languages3(cards, args.language_price_thresholds)
 cards_by_lang: dict[str, list[str]] = {}
 for key, value in cards_chosen_lang.items():
     cards_by_lang.setdefault(value, []).append(key)
 print(f"{cards_chosen_lang=}")
 json.dump(cards_chosen_lang, Path("chosen_languages.json").open("w"), indent=2, sort_keys=True)
 
-for language in args.language_price_deltas:
+for language in args.language_price_thresholds:
     print(f"Total in {language}    ({len(cards[language])} cards): {sum(cards[language].values())}")
 
 
 # --- Step 13: Optimize cards using the chosen language ---
 set_expansion(args.expansion_choice)
-set_language(list(args.language_price_deltas.keys())[0])  # Set to first language as placeholder
+set_language(list(args.language_price_thresholds.keys())[0])  # Set to first language as placeholder
 # Find all card rows with required attributes (same as before)
 card_rows = driver.find_elements(By.XPATH, "//div[contains(@class, 'deck-table-row') and @data-id and @data-uuid]")
 for row in card_rows:
     # Get card name
-    name_span = row.find_element(By.CSS_SELECTOR, "div.deck-table-row__name > span")
+    name_span = row.find_element(By.CSS_SELECTOR, ".deck-table-row__name span")
     card_name = name_span.text.strip()
     # Get chosen language for this card
     chosen_lang = cards_chosen_lang.get(card_name)
     if not chosen_lang:
         print(
             f"Error: Couldn't find the chosen language for card {repr(card_name)}. "
-            f"Choosing {list(args.language_price_deltas.keys())[0]} as fallback."
+            f"Choosing {list(args.language_price_thresholds.keys())[0]} as fallback."
         )
-        chosen_lang = list(args.language_price_deltas.keys())[0]
+        chosen_lang = list(args.language_price_thresholds.keys())[0]
     # Find the language dropdown in this row
     select_element = row.find_element(By.CSS_SELECTOR, 'select[name="language"]')
     select = Select(select_element)
@@ -584,14 +687,14 @@ for row in card_rows:
         except Exception:
             print(
                 f"Error: Couldn't select the chosen language for card {repr(card_name)}. "
-                f"Selected {list(args.language_price_deltas.keys())[0]} as fallback."
+                f"Selected {list(args.language_price_thresholds.keys())[0]} as fallback."
             )
 
 set_condition(args.condition)
 set_foil(args.foil_choice)
 click_button("'Refresh'")
 wait_for_optimizer()
-cards_optimized = get_prices()
+cards_optimized = get_prices2()
 print(f"{cards_optimized=}")
 print(f"Total optimized by language: {sum(cards_optimized.values())}")
 json.dump(cards_optimized, Path("final_card_prices.json").open("w"), indent=2, sort_keys=True)
