@@ -121,7 +121,7 @@ def format_card_list(cards: dict) -> str:
         layout = card_info.get("layout", "")
 
         # For split cards, keep the full name including ' // '
-        # For other layouts (MDFCs, adventures, rooms), truncate at ' // '
+        # For other layouts (MDFCs, adventures, etc.), truncate at ' // '
         display_name = card_name
         if layout != "split" and " // " in card_name:
             display_name = card_name.split(" // ")[0]
