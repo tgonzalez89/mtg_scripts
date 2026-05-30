@@ -10,9 +10,9 @@ def main():
     file1_path = sys.argv[1]
     file2_path = sys.argv[2]
 
-    with Path(file1_path).open() as f1:
+    with Path(file1_path).open("r", encoding="utf-8") as f1:
         lines1 = set(line.rstrip("\n") for line in f1)
-    with Path(file2_path).open() as f2:
+    with Path(file2_path).open("r", encoding="utf-8") as f2:
         lines2 = set(line.rstrip("\n") for line in f2)
 
     filtered = [line for line in lines1 if line not in lines2]

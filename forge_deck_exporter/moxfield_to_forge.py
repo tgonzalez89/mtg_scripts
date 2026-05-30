@@ -173,7 +173,7 @@ def create_dck_file(output_path: Path, deck_name: str, commanders: dict, mainboa
     # Write file
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open("w") as f:
+        with output_path.open("w", encoding="utf-8") as f:
             f.write(content)
         return True
     except Exception as e:

@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-cards_en = json.load(Path("en.json").open())
-cards_any = json.load(Path("any.json").open())
+cards_en = json.load(Path("en.json").open("r", encoding="utf-8"))
+cards_any = json.load(Path("any.json").open("r", encoding="utf-8"))
 
 
 total_diff = 0

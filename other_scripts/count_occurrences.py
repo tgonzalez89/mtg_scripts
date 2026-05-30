@@ -12,7 +12,7 @@ def main():
     counter = Counter()
 
     for file_path in file_paths:
-        with Path(file_path).open() as f:
+        with Path(file_path).open("r", encoding="utf-8") as f:
             for line in f:
                 counter[line.rstrip("\n")] += 1
 

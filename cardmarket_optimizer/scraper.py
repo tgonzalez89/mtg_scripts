@@ -184,14 +184,14 @@ with keep.presenting():
 
     sellers_database: dict[str, float] = {}
     if Path(args.sellers_database).is_file():
-        sellers_database = json.load(Path(args.sellers_database).open())
+        sellers_database = json.load(Path(args.sellers_database).open("r", encoding="utf-8"))
 
     offers_database: dict[str, list[dict[str, int | float | str]]] = {}
     if Path(args.offers_database).is_file():
-        offers_database = json.load(Path(args.offers_database).open())
+        offers_database = json.load(Path(args.offers_database).open("r", encoding="utf-8"))
 
     card_list: dict[str, int] = {}
-    with Path(args.card_list).open() as fp:
+    with Path(args.card_list).open("r", encoding="utf-8") as fp:
         for line in fp:
             pattern = re.compile(r"\s+")
             line = pattern.sub(" ", line).strip()

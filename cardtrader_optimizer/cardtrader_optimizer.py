@@ -177,7 +177,7 @@ except Exception:
 checkbox = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "only-identical-copies-checkbox")))
 checkbox.click()
 
-for chunck in split_string_evenly(Path(args.card_list).open().read()):
+for chunck in split_string_evenly(Path(args.card_list).open("r", encoding="utf-8").read()):
     # --- Step 2: Click the "Paste text" button ---
     paste_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable(
@@ -548,7 +548,7 @@ if len(args.language_price_thresholds) == 1:
 
 # --- Step 12: Choose language by card ---
 def choose_languages1(prices_by_lang, config):
-    # Calculate the price diff for each language and the currently selected language.
+    # Calculate the price diff for the language and the currently selected language.
     # If the price diff is >= price diff threshold, choose that language.
     chosen_languages = {}
 
@@ -578,7 +578,7 @@ def choose_languages1(prices_by_lang, config):
 
 
 def choose_languages2(prices_by_lang, config):
-    # Calculate the price diff for each language and the base language (first in config).
+    # Calculate the price diff for the language and the base language (first in config).
     # If the price diff is >= price diff threshold and the price is < the currently selected price,
     # choose that language.
     chosen_languages = {}
@@ -606,8 +606,8 @@ def choose_languages2(prices_by_lang, config):
 
 
 def choose_languages3(prices_by_lang, config):
-    # Calculate the price diff (1) for each language and the currently selected language.
-    # Calculate the price diff (2) for each language and the base language (first in config).
+    # Calculate the price diff (1) for the language and the currently selected language.
+    # Calculate the price diff (2) for the language and the base language (first in config).
     # If the price diff 1 is >= price diff threshold and the price diff 2 is >= accumulated price diff threshold,
     # chose that language.
     chosen_languages = {}

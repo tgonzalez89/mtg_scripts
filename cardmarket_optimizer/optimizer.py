@@ -40,7 +40,7 @@ def parse_args():
 args = parse_args()
 
 card_list: dict[str, int] = {}
-with Path(args.card_list).open() as fp:
+with Path(args.card_list).open("r", encoding="utf-8") as fp:
     for line in fp:
         pattern = re.compile(r"\s+")
         line = pattern.sub(" ", line).strip()
@@ -55,9 +55,11 @@ with Path(args.card_list).open() as fp:
             card_name = re.sub(r"(.*?[^/]) *//? *([^/].*)", r"\1 // \2", card_name).lower()
             card_list[card_name] = card_list.get(card_name, 0) + amount
 
-offers_database: dict[str, list[dict[str, int | float | str]]] = json.load(Path(args.offers_database).open())
+offers_database: dict[str, list[dict[str, int | float | str]]] = json.load(
+    Path(args.offers_database).open("r", encoding="utf-8")
+)
 
-sellers_database: dict[str, float] = json.load(Path(args.sellers_database).open())
+sellers_database: dict[str, float] = json.load(Path(args.sellers_database).open("r", encoding="utf-8"))
 
 sellers_db_cards_available: dict[str, dict[str, int | float]] = {
     seller: {"shipping_price": shipping_price, "cards_available": 0}
@@ -197,7 +199,7 @@ for seller, offers in selected_offers_by_seller.items():
                     if len(sel_ofrs) == 0:
                         selected_offers.pop(card_name)
 
-offers_database = json.load(Path(args.offers_database).open())
+offers_database = json.load(Path(args.offers_database).open("r", encoding="utf-8"))
 
 selected_offers, selected_sellers = run_algo(new_card_list, offers_database, selected_offers, selected_sellers)
 json.dump(selected_offers, Path(args.selected_offers).open("w"), indent=2, sort_keys=True)

@@ -117,7 +117,7 @@ def parse_owned_file(path: str) -> dict[str, int]:
     """
     owned_counts: dict[str, int] = {}
 
-    with Path(path).open() as csvfile:
+    with Path(path).open("r", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
 
         # Try to detect column names dynamically (Moxfield can change headers)
@@ -153,7 +153,7 @@ args = parse_args()
 
 purchased_cards: dict[str, int] = {}
 if args.purchased_file is not None:
-    with Path(args.purchased_file).open() as f:
+    with Path(args.purchased_file).open("r", encoding="utf-8") as f:
         text = f.read()
     pattern = re.compile(r"([^\n]+)\s+\w+ (\d+)\s+\1", re.DOTALL)
     matches = pattern.findall(text)
@@ -181,7 +181,7 @@ if args.purchased_file is not None:
 
 filter_out_list: set[str] = set()
 if args.filter_out_file is not None:
-    with Path(args.filter_out_file).open() as fp:
+    with Path(args.filter_out_file).open("r", encoding="utf-8") as fp:
         for line in fp:
             card_name = line.strip()
             if len(card_name) > 0:
