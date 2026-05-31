@@ -238,28 +238,16 @@ def create_xmage_dck_file(output_path: Path, commanders: dict, mainboard: dict, 
     Returns:
         bool: True if file was created, False if write failed
     """
-    combined_main = {**mainboard, **commanders}
-    content = format_xmage_card_list(combined_main)
+    content = format_xmage_card_list(mainboard)
 
-    if sideboard:
+    side_lines = []
+    for section in (commanders, sideboard):
+        section_lines = format_xmage_card_list(section).splitlines()
+        side_lines.extend(f"SB: {line}" for line in section_lines if line.strip())
+
+    if side_lines:
         if content:
             content += "\n"
-        side_lines = []
-        for card_name in sorted(sideboard.keys()):
-            card_info = sideboard[card_name]
-            quantity = card_info["quantity"]
-            layout = card_info.get("layout", "")
-            set_code = card_info.get("set", "")
-            card_number = card_info.get("cn", "")
-
-            display_name = card_name
-            if layout != "split" and " // " in card_name:
-                display_name = card_name.split(" // ")[0]
-
-            if set_code and card_number:
-                side_lines.append(f"SB: {quantity} [{set_code}:{card_number}] {display_name}")
-            else:
-                side_lines.append(f"SB: {quantity} {display_name}")
         content += "\n".join(side_lines)
 
     try:
