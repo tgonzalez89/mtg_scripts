@@ -68,7 +68,7 @@ def parse_arguments():
             "otag:cycle-scry-land",  # Enter tapped, scry 1
             "otag:cycle-mh3-landscape",  # Basic tri fetches, tap for {C}, can be cycled for 3 colored mana
             "otag:cycle-snc-fetchland",  # Basic tri fetches, are sacrificed automatically and gain 1 life
-            "otag:cycle-ala-panorama",  # Basic tri fetches, tap for add {C}, cost 1 to be fetch
+            "otag:cycle-ala-panorama",  # Basic tri fetches, tap for add {C}, cost 1 to fetch
             "otag:cycle-rav-bounceland",  # Bouncelands
             'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"may pay 3 life"',  # MDFC lands that can enter untapped if one pays 3 life
         ],
