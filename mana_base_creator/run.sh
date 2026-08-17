@@ -150,6 +150,21 @@ case "$theme" in
             "Multiversal Passage"
         )
         ;;
+    mdfcs-all)
+        groups=(
+            "otag:cycle-mh3-mdfc-dual-land"
+            'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"may pay 3 life"'
+            'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"This land enters tapped."'
+        )
+        lands=()
+        ;;
+    mdfcs-dual-untapped)
+        groups=(
+            "otag:cycle-mh3-mdfc-dual-land"
+            'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"may pay 3 life"'
+        )
+        lands=()
+        ;;
     *)
         echo "Unknown theme: $theme"
         exit 1

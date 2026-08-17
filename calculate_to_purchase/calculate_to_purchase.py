@@ -9,6 +9,21 @@ from pathlib import Path
 DEBUG_JSON = False  # Set to True to enable saving intermediate data as json files
 
 
+def normalize_moxfield_deck_id(deck_id: str) -> str:
+    """Normalize a Moxfield deck ID from either a raw ID or a full URL."""
+    if not isinstance(deck_id, str):
+        return deck_id
+
+    cleaned = deck_id.strip().rstrip("/")
+    if not cleaned:
+        return cleaned
+
+    if "/" in cleaned:
+        cleaned = cleaned.rsplit("/", 1)[-1]
+
+    return cleaned
+
+
 def parse_deck_id_arg(deck_id_list):
     """
     Parses a list of strings into a tuple of deck IDs.
@@ -21,10 +36,10 @@ def parse_deck_id_arg(deck_id_list):
         if item.startswith("(") and item.endswith(")"):
             # Safely parse content inside parentheses as a tuple of strings
             inner = item[1:-1].strip()
-            ids = tuple(i.strip() for i in inner.split(",") if i.strip())
+            ids = tuple(normalize_moxfield_deck_id(i.strip()) for i in inner.split(",") if i.strip())
             result.append(ids)
         else:
-            result.append(item)
+            result.append(normalize_moxfield_deck_id(item))
     return tuple(result)
 
 

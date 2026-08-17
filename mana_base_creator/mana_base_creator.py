@@ -71,6 +71,7 @@ def parse_arguments():
             "otag:cycle-ala-panorama",  # Basic tri fetches, tap for add {C}, cost 1 to fetch
             "otag:cycle-rav-bounceland",  # Bouncelands
             'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"may pay 3 life"',  # MDFC lands that can enter untapped if one pays 3 life
+            'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"This land enters tapped."',  # MDFC lands that enter tapped
         ],
     )
     parser.add_argument(

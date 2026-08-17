@@ -8,6 +8,21 @@ from pathlib import Path
 DEBUG = True
 
 
+def normalize_moxfield_deck_id(deck_id: str) -> str:
+    """Normalize a Moxfield deck ID from either a raw ID or a full URL."""
+    if not isinstance(deck_id, str):
+        return deck_id
+
+    cleaned = deck_id.strip().rstrip("/")
+    if not cleaned:
+        return cleaned
+
+    if "/" in cleaned:
+        cleaned = cleaned.rsplit("/", 1)[-1]
+
+    return cleaned
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert Moxfield deck IDs to Forge or XMage .dck files")
 
@@ -283,9 +298,10 @@ def main():
     failed = 0
 
     for deck_id in args.deck_ids:
-        print(f"\nProcessing deck: {deck_id}")
+        normalized_deck_id = normalize_moxfield_deck_id(deck_id)
+        print(f"\nProcessing deck: {normalized_deck_id}")
 
-        data = download_deck(deck_id)
+        data = download_deck(normalized_deck_id)
         if not data:
             failed += 1
             continue
