@@ -54,7 +54,7 @@ def parse_arguments():
             "otag:cycle-slowland",  # Require >=2 other lands
             "otag:cycle-fastland",  # Require <=2 other lands
             "otag:cycle-verge",  # Tap for one color, can be tapped for the other if control one of the two corresponding basic land types
-            "otag:cycle-msh-basic-dual",  # Tap for {C}, dual if control a basic or a land entered this turn
+            "otag:cycle-msh-lair-dual",  # Tap for {C}, dual if control a basic or a land entered this turn
             "otag:cycle-tor-tainted-land",  # Tap for {C}, dual if control a swamp
             "otag:cycle-checkland",  # Require one of the two corresponding basic land types
             "otag:cycle-tangoland",  # Require 2 basic lands, fetchable
@@ -126,7 +126,8 @@ def query_scryfall(query):
     query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
 
     # Try to load the results from the cache file.
-    cache_file = Path(f".cache/{query_hash}.json")
+    script_dir = Path(__file__).parent
+    cache_file = Path(f"{script_dir}/.cache/{query_hash}.json")
     if cache_file.exists():
         with cache_file.open("r", encoding="utf-8") as f:
             return json.load(f)["data"]
@@ -416,6 +417,8 @@ def main():
                 break
     print(f"Final Mana Base ({len(lands)} lands, total price: {total_price:.2f}):")
 
+    # Alphabetically sort the lands and print them with their counts.
+    lands.sort()
     land_counts = Counter(lands)
     for land, count in land_counts.items():
         print(f"{count} {land}")

@@ -73,7 +73,7 @@ case "$theme" in
             "otag:cycle-slowland"
             "otag:cycle-fastland"
             "otag:cycle-verge"
-            "otag:cycle-msh-basic-dual"
+            "otag:cycle-msh-lair-dual"
             "otag:cycle-tor-tainted-land"
             "otag:cycle-checkland"
             "otag:cycle-tangoland"
@@ -111,7 +111,7 @@ case "$theme" in
             "otag:cycle-dual-surveil-land"
             "otag:cycle-soc-turbulent-land"
             "otag:cycle-verge"
-            "otag:cycle-msh-basic-dual"
+            "otag:cycle-msh-lair-dual"
             "otag:cycle-tor-tainted-land"
             "otag:cycle-checkland"
             "otag:cycle-tangoland"
@@ -132,7 +132,7 @@ case "$theme" in
             "otag:cycle-shockland"
             "otag:cycle-bondland"
             "otag:cycle-painland"
-            "otag:cycle-msh-basic-dual"
+            "otag:cycle-msh-lair-dual"
             "otag:cycle-tor-tainted-land"
             "otag:cycle-reveal-land"
             "otag:cycle-pathway"
@@ -171,8 +171,10 @@ case "$theme" in
         ;;
 esac
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 cmd=(
-    python mana_base_creator.py
+    python "$SCRIPT_DIR/mana_base_creator.py"
     --colors "$colors"
     --total_lands "$total_lands"
     --min_basics "$min_basics"
