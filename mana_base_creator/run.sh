@@ -134,7 +134,6 @@ case "$theme" in
             "otag:cycle-painland"
             "otag:cycle-msh-lair-dual"
             "otag:cycle-tor-tainted-land"
-            "otag:cycle-reveal-land"
             "otag:cycle-pathway"
             "otag:cycle-horizon-land"
             "otag:cycle-hybrid-filterland"
