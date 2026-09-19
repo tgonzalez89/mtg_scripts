@@ -4,8 +4,67 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 
 from print_picker.card_grid import CardGrid
+from print_picker.riftcodex_backend import RiftCodexBackend
 from print_picker.scrollable_zoomable_text_frame import ScrollableZoomableTextFrame
 from print_picker.scryfall_backend import ScryfallBackend
+
+
+class GameSelectionDialog(tk.Toplevel):
+    def __init__(self, master, games):
+        super().__init__(master)
+        self.title("Choose card game")
+        self.resizable(False, False)
+        self.result = None
+        self.transient(master)
+
+        ttk.Label(self, text="Choose the card game to import:").pack(padx=20, pady=(18, 8))
+        self.game_list = tk.Listbox(self, height=min(8, len(games)), exportselection=False)
+        self.game_list.pack(fill="both", expand=True, padx=20)
+        for game in games:
+            self.game_list.insert(tk.END, game)
+        self.game_list.selection_set(0)
+        self.game_list.activate(0)
+        self.game_list.bind("<Double-1>", lambda _event: self._select())
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill="x", padx=20, pady=15)
+        ttk.Button(button_frame, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(button_frame, text="Choose", command=self._select).pack(side="right", padx=(0, 8))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.grab_set()
+        self.game_list.focus_set()
+
+    def _select(self):
+        selection = self.game_list.curselection()
+        if selection:
+            self.result = self.game_list.get(selection[0])
+            self.destroy()
+
+
+class ExportChoiceDialog(tk.Toplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Export card list")
+        self.resizable(False, False)
+        self.result = None
+        self.transient(master)
+
+        ttk.Label(self, text="How would you like to export the card list?").pack(padx=20, pady=(18, 12))
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill="x", padx=20, pady=(0, 18))
+        ttk.Button(button_frame, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(button_frame, text="Copy to clipboard", command=lambda: self._finish("clipboard")).pack(
+            side="right", padx=(0, 8)
+        )
+        ttk.Button(button_frame, text="Save to file", command=lambda: self._finish("file")).pack(
+            side="right", padx=(0, 8)
+        )
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.grab_set()
+
+    def _finish(self, result):
+        self.result = result
+        self.destroy()
 
 
 class PrintingChooser(tk.Toplevel):
@@ -29,22 +88,24 @@ class PrintingChooser(tk.Toplevel):
             self.after(0, self.grid.set_items, [])
             return
         try:
-            printings = self.backend.get_printings(card.get("oracle_id"))
+            card_id = card.get("oracle_id") or card
+            printings = self.backend.get_printings(card_id)
             self.after(0, self._set_printings, printings)
         except (OSError, ValueError) as error:
             self.after(0, self._show_error, error)
 
     def _set_printings(self, printings):
         for printing in printings:
-            printing["name"] = self.card_item["name"]
-            printing["display_name"] = (
-                f"{printing.get('set_name', '')} ({printing.get('set', '')}) #{printing.get('collector_number', '')}"
-            )
-        self.grid.load_items(printings, self._load_printing)
+            printing["name"] = printing.get("name", self.card_item["name"])
+            printing["display_name"] = self.backend.printing_display_name(printing)
+        self.grid.load_items(printings, self._load_printing_metadata, self._load_printing_image)
 
-    def _load_printing(self, printing, callback):
+    def _load_printing_metadata(self, printing, callback):
+        callback(printing)
+
+    def _load_printing_image(self, printing, callback):
         try:
-            image_urls = self.backend.image_urls(printing)
+            image_urls = self.backend.image_urls(printing, quality="normal")
             printing["images"] = [self.backend.get_image(url) for url in image_urls]
             printing["image"] = printing["images"][0] if printing["images"] else None
         except (OSError, ValueError) as error:
@@ -68,6 +129,10 @@ class App(tk.Tk):
         self.minsize(400, 400)
         self.state("zoomed")
         self.backend = ScryfallBackend()
+        self.backends = {
+            "Magic: The Gathering": self.backend,
+            "RiftBound": RiftCodexBackend(),
+        }
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.items = []
         self._build_layout()
@@ -102,19 +167,39 @@ class App(tk.Tk):
         ttk.Button(self.button_frame, text="Download images", command=self._on_download_images).pack(fill="x", pady=5)
 
     def _on_import(self):
+        game = self._choose_game()
+        if game is None:
+            return
+        self.backend = self.backends[game]
+        self.grid.set_backend(self.backend)
+
         raw_text = self.text_widget.get("1.0", "end").strip()
         if not raw_text:
             messagebox.showinfo("Import", "Enter at least one card name.")
             return
         self.items = self._parse_input(raw_text)
-        self.grid.load_items(self.items, self._load_card)
+        self.grid.load_items(self.items, self._load_card, self._load_card_image)
+
+    def _choose_game(self):
+        dialog = GameSelectionDialog(self, self.backends.keys())
+        self.wait_window(dialog)
+        return dialog.result
 
     def _load_card(self, item, callback):
         try:
-            card = self.backend.search_card(item["name"])
+            card = self.backend.search_card(item["name"], item.get("printing_hint"))
             item["card"] = card
             item["default_card"] = card
-            image_urls = self.backend.image_urls(card) if card else []
+            if card and card.get("name"):
+                item["name"] = card["name"]
+        except (OSError, ValueError) as error:
+            item["error"] = str(error)
+        callback(item)
+
+    def _load_card_image(self, item, callback):
+        try:
+            card = item.get("card")
+            image_urls = self.backend.image_urls(card, quality="normal") if card else []
             item["images"] = [self.backend.get_image(url) for url in image_urls]
             item["image"] = item["images"][0] if item["images"] else None
         except (OSError, ValueError) as error:
@@ -125,9 +210,17 @@ class App(tk.Tk):
         def on_choose(updated_item):
             self._printing_chosen(updated_item)
             if viewer is not None:
-                viewer.update_current_images(updated_item.get("images") or [updated_item["image"]])
+                viewer.update_current_images(self._get_full_images(updated_item))
 
         PrintingChooser(self, item, self.backend, on_choose)
+
+    def _get_full_images(self, item):
+        source = item.get("chosen_print") or item.get("default_card") or item.get("card")
+        if not source:
+            return item.get("images") or [item["image"]]
+        image_urls = self.backend.image_urls(source, quality="png")
+        images = [self.backend.get_image(url) for url in image_urls]
+        return images or item.get("images") or [item["image"]]
 
     def _printing_chosen(self, item):
         printing = item.get("chosen_print")
@@ -137,19 +230,8 @@ class App(tk.Tk):
         item["images"] = printing.get("images") or [item["image"]]
         self.grid.refresh_item(item)
 
-    @staticmethod
-    def _parse_input(raw_text):
-        items = []
-        for raw_line in raw_text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            parts = line.split(maxsplit=1)
-            quantity, name = 1, line
-            if len(parts) == 2 and parts[0].isdigit():
-                quantity, name = int(parts[0]), parts[1].strip()
-            items.append({"quantity": quantity, "name": name})
-        return items
+    def _parse_input(self, raw_text):
+        return [self.backend.parse_card_line(line) for line in raw_text.splitlines() if line.strip()]
 
     def _on_clear_request_cache(self):
         self.backend.clear_json_cache()
@@ -176,6 +258,33 @@ class App(tk.Tk):
         if not self.items:
             messagebox.showinfo("Export list", "Import cards first.")
             return
+
+        combined = {}
+        for item in self.items:
+            source = item.get("chosen_print") or item.get("default_card") or item.get("card")
+            set_code = source.get("set", "") if source else ""
+            collector_number = source.get("collector_number", "") if source else ""
+            foil_requested = item.get("printing_hint", {}).get("is_foil")
+            collector_number = self._format_collector_number(collector_number, foil_requested)
+            key = (item["name"], set_code, collector_number)
+            combined[key] = combined.get(key, 0) + item["quantity"]
+        lines = [
+            f"{quantity} {name} ({set_code}) {collector_number}"
+            for (name, set_code, collector_number), quantity in combined.items()
+        ]
+        export_text = "\n".join(lines) + "\n"
+
+        dialog = ExportChoiceDialog(self)
+        self.wait_window(dialog)
+        if dialog.result == "clipboard":
+            self.clipboard_clear()
+            self.clipboard_append(export_text)
+            self.update()
+            messagebox.showinfo("Export list", "Card list copied to the clipboard.", parent=self)
+            return
+        if dialog.result != "file":
+            return
+
         path = filedialog.asksaveasfilename(
             parent=self,
             title="Save card list",
@@ -184,26 +293,28 @@ class App(tk.Tk):
         )
         if not path:
             return
-        combined = {}
-        for item in self.items:
-            source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-            set_code = source.get("set", "") if source else ""
-            collector_number = source.get("collector_number", "") if source else ""
-            key = (item["name"], set_code, collector_number)
-            combined[key] = combined.get(key, 0) + item["quantity"]
-        lines = [
-            f"{quantity} {name} ({set_code}) {collector_number}"
-            for (name, set_code, collector_number), quantity in combined.items()
-        ]
         with open(path, "w", encoding="utf-8") as output_file:
-            output_file.write("\n".join(lines) + "\n")
+            output_file.write(export_text)
         messagebox.showinfo("Export list", f"Saved card list to {path}.", parent=self)
 
+    @staticmethod
+    def _format_collector_number(collector_number, foil_requested=None):
+        collector_number = str(collector_number)
+        foil_star = chr(0x2605)
+        if (foil_requested is True or collector_number.endswith(("*", foil_star))) and not collector_number.endswith(
+            "*F*"
+        ):
+            base_number = (
+                collector_number[:-1].rstrip()
+                if collector_number.endswith(("*", foil_star))
+                else collector_number.rstrip()
+            )
+            return f"{base_number} *F*"
+        return collector_number
+
     def _save_item_images(self, folder, item_index, item, source):
-        images = item.get("images")
-        if not images:
-            image_urls = self.backend.image_urls(source)
-            images = [self.backend.get_image(url) for url in image_urls]
+        image_urls = self.backend.image_urls(source, quality="png")
+        images = [self.backend.get_image(url) for url in image_urls]
         if not images:
             return
 

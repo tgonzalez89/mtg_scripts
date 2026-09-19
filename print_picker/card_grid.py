@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import ttk
 
 from print_picker.card import Card
+from print_picker.card_backend import CardBackend
 from print_picker.full_image_window import FullImageWindow
 from print_picker.scrollable_frame import ScrollableFrame
 from print_picker.scryfall_backend import ScryfallBackend
@@ -18,6 +19,7 @@ class CardGrid(ttk.Frame):
         self.grid_zoom = 1.0
         self.executor = ThreadPoolExecutor(max_workers=8)
         self._load_generation = 0
+        self._loaded_items = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -50,6 +52,9 @@ class CardGrid(ttk.Frame):
         for widget in self.scrollable.frame.winfo_children():
             widget.destroy()
 
+    def set_backend(self, backend: CardBackend):
+        self.backend = backend
+
     def set_items(self, items):
         self.clear()
         self.items = items
@@ -59,9 +64,11 @@ class CardGrid(ttk.Frame):
                 self._add_card(item, copy_number)
         self._reflow()
 
-    def load_items(self, items, loader):
+    def load_items(self, items, loader, image_loader=None):
         self.clear()
         self.items = items
+        self._loaded_items = {}
+        self._image_loader = image_loader
         generation = self._load_generation
         for item in items:
             self.executor.submit(
@@ -71,14 +78,37 @@ class CardGrid(ttk.Frame):
             )
 
     def _on_item_loaded(self, item, generation):
-        self.after(0, self._add_loaded_item, item, generation)
+        self.after(0, self._record_loaded_item, item, generation)
+
+    def _record_loaded_item(self, item, generation):
+        if generation != self._load_generation:
+            return
+        self._loaded_items[id(item)] = item
+        if len(self._loaded_items) == len(self.items):
+            ordered_items = self.backend.sort_items(
+                list(self._loaded_items.values()), include_name=not self.chooser_mode
+            )
+            for loaded_item in ordered_items:
+                self._add_loaded_item(loaded_item, generation)
+            self._reflow()
+            if self._image_loader:
+                for loaded_item in ordered_items:
+                    self.executor.submit(
+                        self._image_loader,
+                        loaded_item,
+                        lambda updated, current=generation: self._on_image_loaded(updated, current),
+                    )
+
+    def _on_image_loaded(self, item, generation):
+        if generation != self._load_generation:
+            return
+        self.after(0, self.refresh_item, item)
 
     def _add_loaded_item(self, item, generation):
         if generation != self._load_generation:
             return
         for copy_number in range(1, item.get("quantity", 1) + 1):
             self._add_card(item, copy_number)
-        self._reflow()
 
     def _add_card(self, item, copy_number):
         card = Card(
@@ -102,7 +132,7 @@ class CardGrid(ttk.Frame):
     def _right_click(self, card, _event):
         image_cards = [other for other in self.cards if other.item.get("image")]
         if card in image_cards:
-            images = [other.item.get("images") or [other.item["image"]] for other in image_cards]
+            images = [self._get_full_images(other.item) for other in image_cards]
             action_callback = None
             action_text = None
             if self.on_choose:
@@ -119,6 +149,14 @@ class CardGrid(ttk.Frame):
                 action_callback,
                 action_text,
             )
+
+    def _get_full_images(self, item):
+        source = item.get("chosen_print") or item.get("default_card") or item.get("card")
+        if not source:
+            return item.get("images") or [item["image"]]
+        image_urls = self.backend.image_urls(source, quality="png")
+        images = [self.backend.get_image(url) for url in image_urls]
+        return images or item.get("images") or [item["image"]]
 
     def refresh_item(self, item):
         for card in self.cards:
