@@ -101,7 +101,8 @@ class ScryfallBackend(CardBackend):
             return "nonfoil" in card.get("finishes", [])
         return True
 
-    def get_printings(self, oracle_id):
+    def get_printings(self, card):
+        oracle_id = card.get("oracle_id") if card else None
         if not oracle_id:
             return []
         url = SCRYFALL_SEARCH_URL + quote_plus(f"unique:prints oracleid:{oracle_id}")
@@ -122,10 +123,38 @@ class ScryfallBackend(CardBackend):
         )
 
     @staticmethod
+    def card_name(card):
+        return card.get("name", "")
+
+    @staticmethod
     def printing_display_name(card):
         set_name = card.get("set_name", "")
         set_code = card.get("set", "").upper()
         return f"{set_name} ({set_code}) #{card.get('collector_number', '')}"
+
+    @staticmethod
+    def printing_export_fields(card, printing_hint=None):
+        set_code = card.get("set", "")
+        collector_number = ScryfallBackend._format_collector_number(
+            card.get("collector_number", ""),
+            printing_hint.get("is_foil") if printing_hint else None,
+        )
+        return set_code, collector_number
+
+    @staticmethod
+    def _format_collector_number(collector_number, foil_requested=None):
+        collector_number = str(collector_number)
+        foil_star = chr(0x2605)
+        if (foil_requested is True or collector_number.endswith(("*", foil_star))) and not collector_number.endswith(
+            "*F*"
+        ):
+            base_number = (
+                collector_number[:-1].rstrip()
+                if collector_number.endswith(("*", foil_star))
+                else collector_number.rstrip()
+            )
+            return f"{base_number} *F*"
+        return collector_number
 
     @staticmethod
     def image_url(card, high_quality=False):

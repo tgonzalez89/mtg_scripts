@@ -85,8 +85,13 @@ class CardBackend(ABC):
         """Return the requested card printing, or None when no card was found."""
 
     @abstractmethod
-    def get_printings(self, card_id):
-        """Return the available printings for a card."""
+    def get_printings(self, card):
+        """Return the available printings for a card record."""
+
+    @staticmethod
+    @abstractmethod
+    def card_name(card):
+        """Return the display name for a card record."""
 
     def sort_items(self, items, include_name=False):
         return sorted(items, key=lambda item: self._sort_key(item, include_name))
@@ -122,6 +127,11 @@ class CardBackend(ABC):
     @abstractmethod
     def printing_display_name(card):
         """Return a readable set and collector-number label for a printing."""
+
+    @staticmethod
+    @abstractmethod
+    def printing_export_fields(card, printing_hint=None):
+        """Return the set code and collector number used for export."""
 
     @staticmethod
     @abstractmethod

@@ -70,11 +70,11 @@ class RiftCodexBackend(CardBackend):
         data = self.request_json(url)
         return data.get("items", [])
 
-    def get_printings(self, card_id):
-        if not isinstance(card_id, dict):
-            return [card_id] if card_id else []
+    def get_printings(self, card):
+        if not isinstance(card, dict):
+            return []
 
-        names = {card_id.get("name", ""), card_id.get("metadata", {}).get("clean_name", "")}
+        names = {card.get("name", ""), card.get("metadata", {}).get("clean_name", "")}
         printings = {}
         exact_candidates = []
         for name in names:
@@ -110,6 +110,10 @@ class RiftCodexBackend(CardBackend):
         )
 
     @staticmethod
+    def card_name(card):
+        return card.get("name", "")
+
+    @staticmethod
     def printing_display_name(card):
         set_info = card.get("set") or {}
         if isinstance(set_info, dict):
@@ -119,6 +123,12 @@ class RiftCodexBackend(CardBackend):
             set_label = ""
             set_id = str(set_info)
         return f"{set_label} ({set_id.upper()}) #{card.get('collector_number', '')}"
+
+    @staticmethod
+    def printing_export_fields(card, printing_hint=None):
+        set_info = card.get("set") or {}
+        set_code = set_info.get("set_id", "") if isinstance(set_info, dict) else str(set_info)
+        return set_code, str(card.get("collector_number", ""))
 
     @staticmethod
     def image_url(card, high_quality=False):

@@ -88,15 +88,14 @@ class PrintingChooser(tk.Toplevel):
             self.after(0, self.grid.set_items, [])
             return
         try:
-            card_id = card.get("oracle_id") or card
-            printings = self.backend.get_printings(card_id)
+            printings = self.backend.get_printings(card)
             self.after(0, self._set_printings, printings)
         except (OSError, ValueError) as error:
             self.after(0, self._show_error, error)
 
     def _set_printings(self, printings):
         for printing in printings:
-            printing["name"] = printing.get("name", self.card_item["name"])
+            printing["name"] = self.backend.card_name(printing) or self.card_item["name"]
             printing["display_name"] = self.backend.printing_display_name(printing)
         self.grid.load_items(printings, self._load_printing_metadata, self._load_printing_image)
 
@@ -190,8 +189,9 @@ class App(tk.Tk):
             card = self.backend.search_card(item["name"], item.get("printing_hint"))
             item["card"] = card
             item["default_card"] = card
-            if card and card.get("name"):
-                item["name"] = card["name"]
+            card_name = self.backend.card_name(card) if card else ""
+            if card_name:
+                item["name"] = card_name
         except (OSError, ValueError) as error:
             item["error"] = str(error)
         callback(item)
@@ -260,10 +260,11 @@ class App(tk.Tk):
         combined = {}
         for item in self.grid.get_display_items():
             source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-            set_code = source.get("set", "") if source else ""
-            collector_number = source.get("collector_number", "") if source else ""
-            foil_requested = item.get("printing_hint", {}).get("is_foil")
-            collector_number = self._format_collector_number(collector_number, foil_requested)
+            set_code, collector_number = (
+                self.backend.printing_export_fields(source, item.get("printing_hint"))
+                if source
+                else ("", "")
+            )
             key = (item["name"], set_code, collector_number)
             combined[key] = combined.get(key, 0) + item["quantity"]
         lines = [
@@ -294,29 +295,13 @@ class App(tk.Tk):
             output_file.write(export_text)
         self._show_path_confirmation("Export list", f"Saved card list to {path}.", path)
 
-    @staticmethod
-    def _format_collector_number(collector_number, foil_requested=None):
-        collector_number = str(collector_number)
-        foil_star = chr(0x2605)
-        if (foil_requested is True or collector_number.endswith(("*", foil_star))) and not collector_number.endswith(
-            "*F*"
-        ):
-            base_number = (
-                collector_number[:-1].rstrip()
-                if collector_number.endswith(("*", foil_star))
-                else collector_number.rstrip()
-            )
-            return f"{base_number} *F*"
-        return collector_number
-
     def _save_item_images(self, folder, item_index, item, source):
         image = self.backend.load_card_image(source, high_quality=True)
         if not image:
             return
 
         base_name = self._safe_filename(item["name"])
-        set_code = source.get("set", "")
-        collector_number = source.get("collector_number", "")
+        set_code, collector_number = self.backend.printing_export_fields(source)
         for copy_number in range(1, item["quantity"] + 1):
             filename = f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face1.png"
             image.save(os.path.join(folder, filename), format="PNG")
