@@ -128,13 +128,13 @@ class ScryfallBackend(CardBackend):
         return f"{set_name} ({set_code}) #{card.get('collector_number', '')}"
 
     @staticmethod
-    def image_urls(card, quality="png"):
+    def image_url(card, high_quality=False):
+        quality = "png" if high_quality else "normal"
         image_uris = card.get("image_uris", {})
         if image_uris.get(quality):
-            return [image_uris[quality]]
-        urls = []
+            return image_uris[quality]
         for face in card.get("card_faces") or []:
             face_url = face.get("image_uris", {}).get(quality)
             if face_url:
-                urls.append(face_url)
-        return urls
+                return face_url
+        return None

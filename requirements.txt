@@ -13,3 +13,4 @@ pywinauto
 # NOTE: This can be tricky to install.
 # Follow the instructions at https://pypi.org/project/tesserocr/
 # tesserocr
+requests

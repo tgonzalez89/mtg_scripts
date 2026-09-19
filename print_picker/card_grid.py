@@ -111,9 +111,12 @@ class CardGrid(ttk.Frame):
             self._add_card(item, copy_number)
 
     def _add_card(self, item, copy_number):
+        display_item = item.copy()
+        display_item["quantity"] = 1
+        display_item["_source_item"] = item
         card = Card(
             self.scrollable.frame,
-            item,
+            display_item,
             copy_number,
             self._change_zoom,
             self._left_click,
@@ -121,6 +124,9 @@ class CardGrid(ttk.Frame):
             self.grid_zoom,
         )
         self.cards.append(card)
+
+    def get_display_items(self):
+        return [card.item for card in self.cards]
 
     def _left_click(self, card, _event):
         if self.chooser_mode:
@@ -132,7 +138,7 @@ class CardGrid(ttk.Frame):
     def _right_click(self, card, _event):
         image_cards = [other for other in self.cards if other.item.get("image")]
         if card in image_cards:
-            images = [self._get_full_images(other.item) for other in image_cards]
+            images = [self.get_full_images(other.item) for other in image_cards]
             action_callback = None
             action_text = None
             if self.on_choose:
@@ -150,18 +156,20 @@ class CardGrid(ttk.Frame):
                 action_text,
             )
 
-    def _get_full_images(self, item):
-        source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-        if not source:
-            return item.get("images") or [item["image"]]
-        image_urls = self.backend.image_urls(source, quality="png")
-        images = [self.backend.get_image(url) for url in image_urls]
-        return images or item.get("images") or [item["image"]]
+    def get_full_images(self, item):
+        source = item.get("chosen_print") or item.get("default_card") or item.get("card") or item
+        image = self.backend.load_card_image(source, high_quality=True)
+        return [image] if image else item.get("images") or [item["image"]]
 
     def refresh_item(self, item):
         for card in self.cards:
             if card.item is item:
                 card._image = item.get("image")
+                card._render_cache.clear()
+                card.set_zoom(self.grid_zoom)
+            elif card.item.get("_source_item") is item and "chosen_print" not in card.item:
+                card.item.update({key: item.get(key) for key in ("image", "images", "error")})
+                card._image = card.item.get("image")
                 card._render_cache.clear()
                 card.set_zoom(self.grid_zoom)
         self._reflow()

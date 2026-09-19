@@ -121,11 +121,11 @@ class RiftCodexBackend(CardBackend):
         return f"{set_label} ({set_id.upper()}) #{card.get('collector_number', '')}"
 
     @staticmethod
-    def image_urls(card, quality="png"):
+    def image_url(card, high_quality=False):
         media = card.get("media") or {}
         if isinstance(media, dict):
             image_url = media.get("image_url")
             if image_url:
-                return [image_url]
+                return image_url
         image_url = card.get("image_url")
-        return [image_url] if image_url else []
+        return image_url

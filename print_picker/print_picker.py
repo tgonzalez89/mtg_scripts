@@ -105,9 +105,9 @@ class PrintingChooser(tk.Toplevel):
 
     def _load_printing_image(self, printing, callback):
         try:
-            image_urls = self.backend.image_urls(printing, quality="normal")
-            printing["images"] = [self.backend.get_image(url) for url in image_urls]
-            printing["image"] = printing["images"][0] if printing["images"] else None
+            image = self.backend.load_card_image(printing)
+            printing["images"] = [image] if image else []
+            printing["image"] = image
         except (OSError, ValueError) as error:
             printing["error"] = str(error)
         callback(printing)
@@ -199,9 +199,9 @@ class App(tk.Tk):
     def _load_card_image(self, item, callback):
         try:
             card = item.get("card")
-            image_urls = self.backend.image_urls(card, quality="normal") if card else []
-            item["images"] = [self.backend.get_image(url) for url in image_urls]
-            item["image"] = item["images"][0] if item["images"] else None
+            image = self.backend.load_card_image(card) if card else None
+            item["images"] = [image] if image else []
+            item["image"] = image
         except (OSError, ValueError) as error:
             item["error"] = str(error)
         callback(item)
@@ -210,17 +210,9 @@ class App(tk.Tk):
         def on_choose(updated_item):
             self._printing_chosen(updated_item)
             if viewer is not None:
-                viewer.update_current_images(self._get_full_images(updated_item))
+                viewer.update_current_images(self.grid.get_full_images(updated_item))
 
         PrintingChooser(self, item, self.backend, on_choose)
-
-    def _get_full_images(self, item):
-        source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-        if not source:
-            return item.get("images") or [item["image"]]
-        image_urls = self.backend.image_urls(source, quality="png")
-        images = [self.backend.get_image(url) for url in image_urls]
-        return images or item.get("images") or [item["image"]]
 
     def _printing_chosen(self, item):
         printing = item.get("chosen_print")
@@ -239,6 +231,12 @@ class App(tk.Tk):
     def _on_clear_image_cache(self):
         self.backend.clear_image_cache()
 
+    def _show_path_confirmation(self, title, message, path):
+        self.clipboard_clear()
+        self.clipboard_append(path)
+        self.update()
+        messagebox.showinfo(title, f"{message}\nThe path has been copied to the clipboard.", parent=self)
+
     def _on_download_images(self):
         if not self.items:
             messagebox.showinfo("Download images", "Import cards first.")
@@ -247,12 +245,12 @@ class App(tk.Tk):
         if not folder:
             return
 
-        for item_index, item in enumerate(self.items, start=1):
+        for item_index, item in enumerate(self.grid.get_display_items(), start=1):
             source = item.get("chosen_print") or item.get("default_card") or item.get("card")
             if not source:
                 continue
             self.executor.submit(self._save_item_images, folder, item_index, item, source)
-        messagebox.showinfo("Download images", f"Downloading images to {folder}.", parent=self)
+        self._show_path_confirmation("Download images", f"Downloading images to {folder}.", folder)
 
     def _on_export_list(self):
         if not self.items:
@@ -260,7 +258,7 @@ class App(tk.Tk):
             return
 
         combined = {}
-        for item in self.items:
+        for item in self.grid.get_display_items():
             source = item.get("chosen_print") or item.get("default_card") or item.get("card")
             set_code = source.get("set", "") if source else ""
             collector_number = source.get("collector_number", "") if source else ""
@@ -280,7 +278,6 @@ class App(tk.Tk):
             self.clipboard_clear()
             self.clipboard_append(export_text)
             self.update()
-            messagebox.showinfo("Export list", "Card list copied to the clipboard.", parent=self)
             return
         if dialog.result != "file":
             return
@@ -295,7 +292,7 @@ class App(tk.Tk):
             return
         with open(path, "w", encoding="utf-8") as output_file:
             output_file.write(export_text)
-        messagebox.showinfo("Export list", f"Saved card list to {path}.", parent=self)
+        self._show_path_confirmation("Export list", f"Saved card list to {path}.", path)
 
     @staticmethod
     def _format_collector_number(collector_number, foil_requested=None):
@@ -313,20 +310,16 @@ class App(tk.Tk):
         return collector_number
 
     def _save_item_images(self, folder, item_index, item, source):
-        image_urls = self.backend.image_urls(source, quality="png")
-        images = [self.backend.get_image(url) for url in image_urls]
-        if not images:
+        image = self.backend.load_card_image(source, high_quality=True)
+        if not image:
             return
 
         base_name = self._safe_filename(item["name"])
         set_code = source.get("set", "")
         collector_number = source.get("collector_number", "")
         for copy_number in range(1, item["quantity"] + 1):
-            for face_index, image in enumerate(images, start=1):
-                filename = (
-                    f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
-                )
-                image.save(os.path.join(folder, filename), format="PNG")
+            filename = f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face1.png"
+            image.save(os.path.join(folder, filename), format="PNG")
 
     @staticmethod
     def _safe_filename(name):

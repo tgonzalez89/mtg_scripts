@@ -63,6 +63,10 @@ class CardBackend(ABC):
             image = image.rotate(90, expand=True)
         return image
 
+    def load_card_image(self, card, high_quality=False):
+        url = self.image_url(card, high_quality)
+        return self.get_image(url) if url else None
+
     def clear_json_cache(self):
         for cache_file in self.json_cache_dir.glob("*.json"):
             cache_file.unlink()
@@ -121,10 +125,5 @@ class CardBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def image_urls(card, quality="png"):
-        """Return image URLs for a card."""
-
-    @classmethod
-    def image_url(cls, card, quality="png"):
-        urls = cls.image_urls(card, quality)
-        return urls[0] if urls else None
+    def image_url(card, high_quality=False):
+        """Return the image URL for a card at the requested quality."""
