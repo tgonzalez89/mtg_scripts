@@ -1,6 +1,12 @@
-from typing import Any
+from __future__ import annotations
 
-from mtg_scripts.print_picker.scryfall_backend import ScryfallBackend
+import json
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from mtg_scripts.print_picker.scryfall_backend import SCRYFALL_INDEX_CACHE_VERSION, ScryfallBackend
 
 
 def _backend_with_cards(cards: list[dict[str, Any]]) -> ScryfallBackend:
@@ -150,3 +156,29 @@ def test_set_only_foil_hint_uses_shared_finish_record() -> None:
         card = backend.search_card(item["name"], item.get("printing_hint"))
         assert card is not None
         assert card["id"] == "fdc-213"
+
+
+def test_bulk_index_is_reused_from_serialized_cache(tmp_path: Path) -> None:
+    backend = ScryfallBackend(cache_dir=tmp_path)
+    download_uri = "https://data.scryfall.io/oracle-cards/oracle-v1.jsonl.gz"
+    metadata = {"oracle_cards": {"jsonl_download_uri": download_uri}, "default_cards": {}}
+    metadata_path = backend.bulk_dir / "metadata.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    bulk_version = backend._cache_name(download_uri)[:16]
+    bulk_path = backend.bulk_dir / f"oracle_cards-{bulk_version}.jsonl.gz"
+    bulk_path.write_bytes(b"unused")
+    expected_index = {
+        "by_name": {"birds of paradise": [{"id": "cached"}]},
+        "by_front_face_name": {},
+        "by_flavor_name": {},
+        "by_oracle_id": {},
+    }
+    backend._build_bulk_index = lambda _bulk_type, _bulk_path: expected_index
+
+    assert backend._oracle_index() == expected_index
+    index_path = backend.bulk_dir / f"oracle_cards-{bulk_version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
+    assert index_path.exists()
+
+    cached_backend = ScryfallBackend(cache_dir=tmp_path)
+    cached_backend._build_bulk_index = lambda *_args: (_ for _ in ()).throw(AssertionError("index rebuilt"))
+    assert cached_backend._oracle_index() == expected_index

@@ -1,5 +1,6 @@
 import gzip
 import json
+import pickle
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
 SCRYFALL_BULK_TYPES = ("oracle_cards", "default_cards")
 SCRYFALL_BULK_METADATA_MAX_AGE = 24 * 60 * 60
+SCRYFALL_INDEX_CACHE_VERSION = 1
 USER_AGENT = "mtg-print-picker/1.0 (contact: local)"
 
 
@@ -192,10 +194,24 @@ class ScryfallBackend(CardBackend):
             download_uri = str(metadata["jsonl_download_uri"])
             version = self._cache_name(download_uri)[:16]
             bulk_path = self.bulk_dir / f"{bulk_type}-{version}.jsonl.gz"
+            index_path = self.bulk_dir / f"{bulk_type}-{version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
+            if index_path.exists():
+                try:
+                    with index_path.open("rb") as index_file:
+                        index = pickle.load(index_file)  # noqa: S301 - this is an application-owned cache
+                except (EOFError, OSError, pickle.PickleError, ValueError):
+                    index_path.unlink(missing_ok=True)
+                else:
+                    self._bulk_indexes[bulk_type] = index
+                    return index
             if not bulk_path.exists():
                 self._download_bulk_file(download_uri, bulk_path, progress_callback)
             self._report_progress(progress_callback, f"Building {bulk_type} index...", 0, 0)
             index = self._build_bulk_index(bulk_type, bulk_path)
+            temporary_index_path = index_path.with_suffix(index_path.suffix + ".tmp")
+            with temporary_index_path.open("wb") as index_file:
+                pickle.dump(index, index_file, protocol=pickle.HIGHEST_PROTOCOL)
+            temporary_index_path.replace(index_path)
             self._bulk_indexes[bulk_type] = index
             return index
 
