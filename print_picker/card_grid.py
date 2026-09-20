@@ -64,18 +64,25 @@ class CardGrid(ttk.Frame):
                 self._add_card(item, copy_number)
         self._reflow()
 
-    def load_items(self, items, loader, image_loader=None):
+    def load_items(self, items, loader, image_loader=None, batch_loader=None):
         self.clear()
         self.items = items
         self._loaded_items = {}
         self._image_loader = image_loader
         generation = self._load_generation
-        for item in items:
+        if batch_loader:
             self.executor.submit(
-                loader,
-                item,
+                batch_loader,
+                items,
                 lambda loaded, current=generation: self._on_item_loaded(loaded, current),
             )
+        else:
+            for item in items:
+                self.executor.submit(
+                    loader,
+                    item,
+                    lambda loaded, current=generation: self._on_item_loaded(loaded, current),
+                )
 
     def _on_item_loaded(self, item, generation):
         self.after(0, self._record_loaded_item, item, generation)
@@ -158,8 +165,9 @@ class CardGrid(ttk.Frame):
 
     def get_full_images(self, item):
         source = item.get("chosen_print") or item.get("default_card") or item.get("card") or item
-        image = self.backend.load_card_image(source, high_quality=True)
-        return [image] if image else item.get("images") or [item["image"]]
+        image_pair = self.backend.load_card_images(source, high_quality=True)
+        images = tuple(image for image in image_pair if image is not None)
+        return images or item.get("images") or [item["image"]]
 
     def refresh_item(self, item):
         for card in self.cards:
@@ -167,11 +175,13 @@ class CardGrid(ttk.Frame):
                 card._image = item.get("image")
                 card._render_cache.clear()
                 card.set_zoom(self.grid_zoom)
+                card._update_face_button()
             elif card.item.get("_source_item") is item and "chosen_print" not in card.item:
                 card.item.update({key: item.get(key) for key in ("image", "images", "error")})
                 card._image = card.item.get("image")
                 card._render_cache.clear()
                 card.set_zoom(self.grid_zoom)
+                card._update_face_button()
         self._reflow()
 
     def _on_resize(self, _event=None):

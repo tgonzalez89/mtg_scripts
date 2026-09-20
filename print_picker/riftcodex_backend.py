@@ -59,22 +59,32 @@ class RiftCodexBackend(CardBackend):
         return card
 
     def _search_by_name(self, name):
-        normalized_name = re.sub(r"[^a-zA-Z0-9]+", " ", name).strip().lower()
+        normalized_name = self._normalize_name(name)
         url = RIFTCODEX_SEARCH_URL + quote_plus(normalized_name)
         data = self.request_json(url)
         return data.get("items", [])
 
     def _search_by_name_fuzzy(self, name):
-        normalized_name = re.sub(r"[^a-zA-Z0-9]+", " ", name).strip().lower()
+        normalized_name = self._normalize_name(name)
         url = RIFTCODEX_FUZZY_SEARCH_URL + quote_plus(normalized_name)
         data = self.request_json(url)
         return data.get("items", [])
 
-    def get_printings(self, card):
+    @staticmethod
+    def _normalize_name(name):
+        return re.sub(r"[^a-zA-Z0-9]+", " ", name).strip().lower()
+
+    def get_printings(self, card, progress_callback=None):
         if not isinstance(card, dict):
             return []
 
-        names = {card.get("name", ""), card.get("metadata", {}).get("clean_name", "")}
+        names = []
+        seen_names = set()
+        for name in (card.get("name", ""), card.get("metadata", {}).get("clean_name", "")):
+            normalized_name = self._normalize_name(name)
+            if normalized_name and normalized_name not in seen_names:
+                seen_names.add(normalized_name)
+                names.append(name)
         printings = {}
         exact_candidates = []
         for name in names:

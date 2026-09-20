@@ -67,6 +67,32 @@ class ExportChoiceDialog(tk.Toplevel):
         self.destroy()
 
 
+class ProgressDialog(tk.Toplevel):
+    def __init__(self, master, title):
+        super().__init__(master)
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(master)
+        self.status_label = ttk.Label(self, text="Starting...")
+        self.status_label.pack(padx=20, pady=(18, 8))
+        self.progress_bar = ttk.Progressbar(self, mode="indeterminate", length=320)
+        self.progress_bar.pack(padx=20, pady=(0, 18))
+        self.progress_bar.start(10)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.update_idletasks()
+
+    def update_progress(self, message, current, total):
+        self.status_label.configure(text=message)
+        if total > 0:
+            if self.progress_bar.cget("mode") != "determinate":
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+            self.progress_bar.configure(maximum=total, value=current)
+        elif self.progress_bar.cget("mode") != "indeterminate":
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start(10)
+
+
 class PrintingChooser(tk.Toplevel):
     def __init__(self, master, card_item, backend, on_choose):
         super().__init__(master)
@@ -78,6 +104,7 @@ class PrintingChooser(tk.Toplevel):
         self.backend = backend
         self.on_choose = on_choose
         self.executor = ThreadPoolExecutor(max_workers=8)
+        self.progress_dialog = ProgressDialog(self, "Loading card data") if backend.supports_progress else None
         self.grid = CardGrid(self, backend=backend, chooser_mode=True, on_choose=self._choose)
         self.grid.pack(fill="both", expand=True)
         self.executor.submit(self._load_printings)
@@ -86,12 +113,27 @@ class PrintingChooser(tk.Toplevel):
         card = self.card_item.get("card")
         if not card:
             self.after(0, self.grid.set_items, [])
+            self.after(0, self._close_progress)
             return
         try:
-            printings = self.backend.get_printings(card)
+            printings = self.backend.lookup_printings(card, self._report_progress)
             self.after(0, self._set_printings, printings)
-        except (OSError, ValueError) as error:
+        except Exception as error:
             self.after(0, self._show_error, error)
+        finally:
+            self.after(0, self._close_progress)
+
+    def _report_progress(self, message, current, total):
+        self.after(0, self._update_progress, message, current, total)
+
+    def _update_progress(self, message, current, total):
+        if self.progress_dialog is not None:
+            self.progress_dialog.update_progress(message, current, total)
+
+    def _close_progress(self):
+        if self.progress_dialog is not None:
+            self.progress_dialog.destroy()
+            self.progress_dialog = None
 
     def _set_printings(self, printings):
         for printing in printings:
@@ -104,12 +146,16 @@ class PrintingChooser(tk.Toplevel):
 
     def _load_printing_image(self, printing, callback):
         try:
-            image = self.backend.load_card_image(printing)
-            printing["images"] = [image] if image else []
-            printing["image"] = image
+            images = self._available_images(self.backend.load_card_images(printing))
+            printing["images"] = images
+            printing["image"] = images[0] if images else None
         except (OSError, ValueError) as error:
             printing["error"] = str(error)
         callback(printing)
+
+    @staticmethod
+    def _available_images(image_pair):
+        return tuple(image for image in image_pair if image is not None)
 
     def _show_error(self, error):
         messagebox.showerror("Printings", str(error), parent=self)
@@ -134,6 +180,7 @@ class App(tk.Tk):
         }
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.items = []
+        self.progress_dialog = None
         self._build_layout()
 
     def _build_layout(self):
@@ -177,7 +224,9 @@ class App(tk.Tk):
             messagebox.showinfo("Import", "Enter at least one card name.")
             return
         self.items = self._parse_input(raw_text)
-        self.grid.load_items(self.items, self._load_card, self._load_card_image)
+        if self.backend.supports_progress:
+            self._start_progress("Loading card data")
+        self.grid.load_items(self.items, self._load_card, self._load_card_images, self._load_cards)
 
     def _choose_game(self):
         dialog = GameSelectionDialog(self, self.backends.keys())
@@ -186,22 +235,60 @@ class App(tk.Tk):
 
     def _load_card(self, item, callback):
         try:
-            card = self.backend.search_card(item["name"], item.get("printing_hint"))
-            item["card"] = card
-            item["default_card"] = card
-            card_name = self.backend.card_name(card) if card else ""
-            if card_name:
-                item["name"] = card_name
+            card = self.backend.lookup_card(item["name"], item.get("printing_hint"))
         except (OSError, ValueError) as error:
             item["error"] = str(error)
+        else:
+            self._set_card_result(item, card)
         callback(item)
 
-    def _load_card_image(self, item, callback):
+    def _load_cards(self, items, callback):
+        try:
+            results = self.backend.lookup_cards(items, self._report_progress)
+        except Exception as error:
+            results = [(None, error)] * len(items)
+        finally:
+            self._finish_progress()
+        for item, (card, error) in zip(items, results):
+            if error:
+                item["error"] = str(error)
+            else:
+                self._set_card_result(item, card)
+            callback(item)
+
+    def _start_progress(self, title):
+        self._close_progress()
+        self.progress_dialog = ProgressDialog(self, title)
+
+    def _report_progress(self, message, current, total):
+        self.after(0, self._update_progress, message, current, total)
+
+    def _update_progress(self, message, current, total):
+        if self.progress_dialog is not None:
+            self.progress_dialog.update_progress(message, current, total)
+
+    def _finish_progress(self):
+        if self.progress_dialog is not None:
+            self.after(0, self._close_progress)
+
+    def _close_progress(self):
+        if self.progress_dialog is not None:
+            self.progress_dialog.destroy()
+            self.progress_dialog = None
+
+    def _set_card_result(self, item, card):
+        item["card"] = card
+        item["default_card"] = card
+        card_name = self.backend.card_name(card) if card else ""
+        if card_name:
+            item["name"] = card_name
+
+    def _load_card_images(self, item, callback):
         try:
             card = item.get("card")
-            image = self.backend.load_card_image(card) if card else None
-            item["images"] = [image] if image else []
-            item["image"] = image
+            images = self._available_images(self.backend.load_card_images(card)) if card else ()
+            item["images"] = images
+            item["image"] = images[0] if images else None
         except (OSError, ValueError) as error:
             item["error"] = str(error)
         callback(item)
@@ -296,15 +383,22 @@ class App(tk.Tk):
         self._show_path_confirmation("Export list", f"Saved card list to {path}.", path)
 
     def _save_item_images(self, folder, item_index, item, source):
-        image = self.backend.load_card_image(source, high_quality=True)
-        if not image:
+        images = self._available_images(self.backend.load_card_images(source, high_quality=True))
+        if not images:
             return
 
         base_name = self._safe_filename(item["name"])
         set_code, collector_number = self.backend.printing_export_fields(source)
         for copy_number in range(1, item["quantity"] + 1):
-            filename = f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face1.png"
-            image.save(os.path.join(folder, filename), format="PNG")
+            for face_index, image in enumerate(images, start=1):
+                filename = (
+                    f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
+                )
+                image.save(os.path.join(folder, filename), format="PNG")
+
+    @staticmethod
+    def _available_images(image_pair):
+        return tuple(image for image in image_pair if image is not None)
 
     @staticmethod
     def _safe_filename(name):

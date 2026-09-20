@@ -20,10 +20,11 @@ class Card(ttk.Frame):
 
         self.header = ttk.Frame(self)
         self.header.pack(fill="x", padx=5, pady=(5, 0))
+        self.header.columnconfigure(0, weight=1, minsize=0)
+        self.face_button = ttk.Button(self.header, text="Flip", width=4, command=self.switch_face)
+        self.face_button.grid(row=0, column=1, padx=(5, 0), sticky="e")
         self.name_label = ttk.Label(self.header, text=item.get("display_name", item.get("name", "")), anchor="center")
-        self.name_label.pack(side="left", fill="x", expand=True)
-        self.face_button = ttk.Button(self.header, text="Flip", command=self.switch_face)
-        self.face_button.pack(side="right", padx=(5, 0))
+        self.name_label.grid(row=0, column=0, sticky="ew")
         self.image_label = ttk.Label(self, anchor="center")
         self.image_label.pack(padx=5, pady=5)
         self.status_label = ttk.Label(self, text=item.get("error", ""), anchor="center")
@@ -80,9 +81,9 @@ class Card(ttk.Frame):
 
     def _update_face_button(self):
         if len(self.item.get("images") or []) > 1:
-            self.face_button.pack(side="right", padx=(5, 0))
+            self.face_button.grid()
         else:
-            self.face_button.pack_forget()
+            self.face_button.grid_remove()
 
     def preferred_width(self):
         return int(230 * self.zoom)

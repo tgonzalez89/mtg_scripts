@@ -1,16 +1,27 @@
+import gzip
+import json
 import re
-from urllib.parse import quote, quote_plus
-
-import requests
+import threading
+import time
 
 from print_picker.card_backend import CardBackend
 
-SCRYFALL_SEARCH_URL = "https://api.scryfall.com/cards/search?q="
-SCRYFALL_CARD_URL = "https://api.scryfall.com/cards/"
+SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
+SCRYFALL_BULK_TYPES = ("oracle_cards", "default_cards")
+SCRYFALL_BULK_METADATA_MAX_AGE = 24 * 60 * 60
 USER_AGENT = "mtg-print-picker/1.0 (contact: local)"
 
 
 class ScryfallBackend(CardBackend):
+    supports_progress = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.bulk_dir = self.json_cache_dir.parent / "bulk"
+        self.bulk_dir.mkdir(parents=True, exist_ok=True)
+        self._bulk_lock = threading.Lock()
+        self._bulk_indexes = {}
+
     @property
     def user_agent(self):
         return USER_AGENT
@@ -56,35 +67,35 @@ class ScryfallBackend(CardBackend):
     def _normalize_card_name(name):
         return re.sub(r"(?<=\S)\s*/+\s*(?=\S)", " // ", name).strip()
 
+    @classmethod
+    def _canonical_card_name(cls, name):
+        return cls._normalize_card_name(name)
+
     def search_card(self, name, printing_hint=None):
-        normalized_name = self._normalize_card_name(name)
-        if printing_hint and printing_hint.get("set") and printing_hint.get("collector_number"):
-            return self._search_exact_printing(normalized_name, printing_hint)
-
-        query_parts = [f'!"{normalized_name}"']
-        if printing_hint and printing_hint.get("set"):
-            query_parts.append(f"set:{printing_hint['set']}")
-        url = SCRYFALL_SEARCH_URL + quote_plus(" ".join(query_parts))
-        data = self.request_json(url)
-        cards = data.get("data", [])
-        normalized_name = normalized_name.casefold()
-        cards = [card for card in cards if card.get("name", "").casefold() == normalized_name]
+        normalized_name = self._canonical_card_name(name)
         if not printing_hint:
-            return cards[0] if cards else None
-        return next((card for card in cards if self._matches_printing_hint(card, printing_hint)), None)
+            oracle_index = self._oracle_index()
+            candidates = self._card_candidates(oracle_index, normalized_name)
+            if candidates:
+                return self._select_card(candidates)
+            default_index = self._default_index()
+            flavor_candidates = default_index["by_flavor_name"].get(normalized_name.casefold(), [])
+            if flavor_candidates:
+                return self._select_card(flavor_candidates)
+            candidates = self._card_candidates(default_index, normalized_name)
+            alias_card = self._select_card(candidates)
+            if alias_card:
+                oracle_id = alias_card.get("oracle_id") or next(
+                    (face.get("oracle_id") for face in alias_card.get("card_faces") or [] if face.get("oracle_id")),
+                    None,
+                )
+                oracle_cards = oracle_index["by_oracle_id"].get(oracle_id, [alias_card])
+                return self._select_card(oracle_cards)
+            return None
 
-    def _search_exact_printing(self, name, printing_hint):
-        set_code = quote(str(printing_hint["set"]).lower(), safe="")
-        collector_number = quote(str(printing_hint["collector_number"]), safe="")
-        try:
-            card = self.request_json(f"{SCRYFALL_CARD_URL}{set_code}/{collector_number}")
-        except requests.HTTPError:
-            return None
-        if card.get("name", "").casefold() != name.casefold():
-            return None
-        if not self._matches_printing_hint(card, printing_hint):
-            return None
-        return card
+        candidates = self._card_candidates(self._default_index(), normalized_name)
+        matches = [card for card in candidates if self._matches_printing_hint(card, printing_hint)]
+        return self._select_card(matches)
 
     @staticmethod
     def _matches_printing_hint(card, printing_hint):
@@ -101,17 +112,154 @@ class ScryfallBackend(CardBackend):
             return "nonfoil" in card.get("finishes", [])
         return True
 
-    def get_printings(self, card):
+    def get_printings(self, card, progress_callback=None):
         oracle_id = card.get("oracle_id") if card else None
+        if not oracle_id and card:
+            oracle_id = next(
+                (face.get("oracle_id") for face in card.get("card_faces") or [] if face.get("oracle_id")),
+                None,
+            )
         if not oracle_id:
             return []
-        url = SCRYFALL_SEARCH_URL + quote_plus(f"unique:prints oracleid:{oracle_id}")
-        printings = []
-        while url:
-            data = self.request_json(url)
-            printings.extend(data.get("data", []))
-            url = data.get("next_page") if data.get("has_more") else None
-        return printings
+        return self._default_index(progress_callback)["by_oracle_id"].get(oracle_id, [])
+
+    def lookup_cards(self, items, progress_callback=None):
+        if any(item.get("printing_hint") for item in items):
+            self._default_index(progress_callback)
+        else:
+            self._oracle_index(progress_callback)
+        return [self._lookup_card_result(item) for item in items]
+
+    def clear_json_cache(self):
+        super().clear_json_cache()
+        with self._bulk_lock:
+            self._bulk_indexes.clear()
+            for bulk_file in self.bulk_dir.iterdir():
+                if bulk_file.is_file():
+                    bulk_file.unlink()
+
+    def _oracle_index(self, progress_callback=None):
+        return self._load_bulk_index("oracle_cards", progress_callback)
+
+    def _default_index(self, progress_callback=None):
+        return self._load_bulk_index("default_cards", progress_callback)
+
+    def _load_bulk_index(self, bulk_type, progress_callback=None):
+        with self._bulk_lock:
+            if bulk_type in self._bulk_indexes:
+                return self._bulk_indexes[bulk_type]
+
+            metadata = self._load_bulk_metadata()[bulk_type]
+            version = self._cache_name(metadata["jsonl_download_uri"])[:16]
+            bulk_path = self.bulk_dir / f"{bulk_type}-{version}.jsonl.gz"
+            if not bulk_path.exists():
+                self._download_bulk_file(metadata["jsonl_download_uri"], bulk_path, progress_callback)
+            self._report_progress(progress_callback, f"Building {bulk_type} index...", 0, 0)
+            index = self._build_bulk_index(bulk_type, bulk_path)
+            self._bulk_indexes[bulk_type] = index
+            return index
+
+    def _load_bulk_metadata(self):
+        metadata_path = self.bulk_dir / "metadata.json"
+        metadata_is_current = metadata_path.exists() and (
+            time.time() - metadata_path.stat().st_mtime < SCRYFALL_BULK_METADATA_MAX_AGE
+        )
+        if metadata_is_current:
+            with metadata_path.open("r", encoding="utf-8") as metadata_file:
+                metadata = json.load(metadata_file)
+            if all(bulk_type in metadata for bulk_type in SCRYFALL_BULK_TYPES):
+                return metadata
+
+        response = self.session.get(SCRYFALL_BULK_DATA_URL, timeout=20)
+        response.raise_for_status()
+        metadata = {entry["type"]: entry for entry in response.json().get("data", [])}
+        missing_types = [bulk_type for bulk_type in SCRYFALL_BULK_TYPES if bulk_type not in metadata]
+        if missing_types:
+            raise ValueError(f"Scryfall bulk data is missing: {', '.join(missing_types)}")
+        with metadata_path.open("w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file)
+        return metadata
+
+    def _download_bulk_file(self, url, destination, progress_callback=None):
+        temporary_path = destination.with_suffix(destination.suffix + ".tmp")
+        response = self.session.get(url, timeout=120, stream=True)
+        response.raise_for_status()
+        try:
+            total = int(response.headers.get("content-length", 0)) if hasattr(response, "headers") else 0
+            downloaded = 0
+            self._report_progress(progress_callback, f"Downloading {destination.stem}...", downloaded, total)
+            with temporary_path.open("wb") as output_file:
+                if hasattr(response, "iter_content"):
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            output_file.write(chunk)
+                            downloaded += len(chunk)
+                            self._report_progress(progress_callback, f"Downloading {destination.stem}...", downloaded, total)
+                else:
+                    output_file.write(response.content)
+                    downloaded = len(response.content)
+                    self._report_progress(progress_callback, f"Downloading {destination.stem}...", downloaded, total)
+            temporary_path.replace(destination)
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    @staticmethod
+    def _report_progress(progress_callback, message, current, total):
+        if progress_callback:
+            progress_callback(message, current, total)
+
+    def _build_bulk_index(self, bulk_type, bulk_path):
+        by_name = {}
+        by_front_face_name = {}
+        by_flavor_name = {}
+        by_oracle_id = {}
+        with gzip.open(bulk_path, "rt", encoding="utf-8") as bulk_file:
+            for line in bulk_file:
+                card = json.loads(line)
+                normalized_name = self._normalize_card_name(self.card_name(card)).casefold()
+                by_name.setdefault(normalized_name, []).append(card)
+                first_face = (card.get("card_faces") or [{}])[0]
+                front_face_name = first_face.get("name")
+                if front_face_name:
+                    normalized_front_name = self._normalize_card_name(front_face_name).casefold()
+                    by_front_face_name.setdefault(normalized_front_name, []).append(card)
+                flavor_names = [card.get("flavor_name")]
+                flavor_names.extend(face.get("flavor_name") for face in card.get("card_faces") or [])
+                for flavor_name in filter(None, flavor_names):
+                    normalized_flavor_name = self._normalize_card_name(flavor_name).casefold()
+                    by_flavor_name.setdefault(normalized_flavor_name, []).append(card)
+                oracle_ids = [card.get("oracle_id")]
+                oracle_ids.extend(face.get("oracle_id") for face in card.get("card_faces") or [])
+                for oracle_id in dict.fromkeys(filter(None, oracle_ids)):
+                    by_oracle_id.setdefault(oracle_id, []).append(card)
+        return {
+            "by_name": by_name,
+            "by_front_face_name": by_front_face_name,
+            "by_flavor_name": by_flavor_name,
+            "by_oracle_id": by_oracle_id,
+        }
+
+    def _card_candidates(self, index, name):
+        normalized_name = self._normalize_card_name(name).casefold()
+        candidates = index["by_name"].get(normalized_name)
+        if candidates:
+            return candidates
+        candidates = index["by_front_face_name"].get(normalized_name)
+        if candidates:
+            return candidates
+        return index["by_flavor_name"].get(normalized_name, [])
+
+    @staticmethod
+    def _select_card(candidates):
+        return min(candidates, key=lambda card: ScryfallBackend._is_token(card)) if candidates else None
+
+    @staticmethod
+    def _is_token(card):
+        return card.get("layout") in {"token", "double_faced_token"} or card.get("type_line", "").startswith("Token")
 
     @staticmethod
     def card_sort_fields(card):
@@ -167,3 +315,13 @@ class ScryfallBackend(CardBackend):
             if face_url:
                 return face_url
         return None
+
+    def load_card_images(self, card, high_quality=False):
+        if card.get("image_uris"):
+            return super().load_card_images(card, high_quality)
+        images = []
+        for face in (card.get("card_faces") or [])[:2]:
+            url = self.image_url(face, high_quality)
+            images.append(self.get_image(url) if url else None)
+        images.extend([None] * (2 - len(images)))
+        return tuple(images)

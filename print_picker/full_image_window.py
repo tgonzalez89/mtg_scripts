@@ -20,7 +20,7 @@ class FullImageWindow(tk.Toplevel):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.images = [image if isinstance(image, list) else [image] for image in images]
+        self.images = [image if isinstance(image, (list, tuple)) else [image] for image in images]
         self.index = index
         self.action_callback = action_callback
         self.face_callback = face_callback
@@ -75,7 +75,7 @@ class FullImageWindow(tk.Toplevel):
         self.action_callback(self.index, self)
 
     def update_current_images(self, images):
-        self.images[self.index] = images if isinstance(images, list) else [images]
+        self.images[self.index] = images if isinstance(images, (list, tuple)) else [images]
         self.face_index = 0
         if hasattr(self, "face_button"):
             self.face_button.configure(state="normal" if len(self.images[self.index]) > 1 else "disabled")
