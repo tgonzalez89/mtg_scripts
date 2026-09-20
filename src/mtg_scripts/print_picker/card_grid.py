@@ -35,6 +35,7 @@ class CardGrid(ttk.Frame):
         self.grid_zoom = 1.0
         self.executor = ThreadPoolExecutor(max_workers=8)
         self._load_generation = 0
+        self._closed = False
         self._loaded_items = {}
         self._build_ui()
 
@@ -67,6 +68,12 @@ class CardGrid(ttk.Frame):
         self.cards.clear()
         for widget in self.scrollable.frame.winfo_children():
             widget.destroy()
+
+    def destroy(self) -> None:
+        self._closed = True
+        self._load_generation += 1
+        self.executor.shutdown(wait=False, cancel_futures=True)
+        super().destroy()
 
     def set_backend(self, backend: CardBackend) -> None:
         self.backend = backend
@@ -107,7 +114,8 @@ class CardGrid(ttk.Frame):
                 )
 
     def _on_item_loaded(self, item: CardItem, generation: int) -> None:
-        self.after(0, self._record_loaded_item, item, generation)
+        if generation == self._load_generation and not self._closed:
+            self.after(0, self._record_loaded_item, item, generation)
 
     def _record_loaded_item(self, item: CardItem, generation: int) -> None:
         if generation != self._load_generation:
@@ -129,9 +137,13 @@ class CardGrid(ttk.Frame):
                     )
 
     def _on_image_loaded(self, item: CardItem, generation: int) -> None:
-        if generation != self._load_generation:
+        if generation != self._load_generation or self._closed:
             return
-        self.after(0, self.refresh_item, item)
+        self.after(0, self._refresh_current_item, item, generation)
+
+    def _refresh_current_item(self, item: CardItem, generation: int) -> None:
+        if generation == self._load_generation and not self._closed:
+            self.refresh_item(item)
 
     def _add_loaded_item(self, item: CardItem, generation: int) -> None:
         if generation != self._load_generation:
@@ -193,12 +205,18 @@ class CardGrid(ttk.Frame):
     def get_full_images(self, item: CardItem) -> tuple[Image.Image, ...]:
         source = cast("CardRecord", item.get("chosen_print") or item.get("default_card") or item.get("card") or item)
         image_pair = self.backend.load_card_images(source, high_quality=True)
-        tuple(image for image in image_pair if image is not None)
+        images = tuple(image for image in image_pair if image is not None)
+        if images:
+            return images
         fallback = item.get("images") or (item.get("image"),)
         return tuple(image for image in fallback if image is not None)
 
     def refresh_item(self, item: CardItem) -> None:
+        if self._closed:
+            return
         for card in self.cards:
+            if not card.winfo_exists():
+                continue
             if card.item is item:
                 card.refresh_from_item()
             elif card.item.get("_source_item") is item and "chosen_print" not in card.item:

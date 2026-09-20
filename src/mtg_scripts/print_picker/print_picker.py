@@ -120,28 +120,38 @@ class PrintingChooser(tk.Toplevel):
         self.card_item = card_item
         self.backend = backend
         self.on_choose = on_choose
+        self._closed = False
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.progress_dialog = ProgressDialog(self, "Loading card data") if backend.supports_progress else None
         self.card_grid = CardGrid(self, backend=backend, chooser_mode=True, on_choose=self._choose)
         self.card_grid.pack(fill="both", expand=True)
         self.executor.submit(self._load_printings)
 
+    def destroy(self) -> None:
+        self._closed = True
+        self.executor.shutdown(wait=False, cancel_futures=True)
+        super().destroy()
+
     def _load_printings(self) -> None:
         card = self.card_item.get("card")
         if not card:
-            self.after(0, self.card_grid.set_items, [])
-            self.after(0, self._close_progress)
+            self._post(self.card_grid.set_items, [])
+            self._post(self._close_progress)
             return
         try:
             printings = self.backend.lookup_printings(card, self._report_progress)
-            self.after(0, self._set_printings, printings)
+            self._post(self._set_printings, printings)
         except (OSError, RuntimeError, ValueError) as error:
-            self.after(0, self._show_error, error)
+            self._post(self._show_error, error)
         finally:
-            self.after(0, self._close_progress)
+            self._post(self._close_progress)
+
+    def _post(self, callback: Callable[..., None], *args: object) -> None:
+        if not self._closed:
+            self.after(0, callback, *args)
 
     def _report_progress(self, message: str, current: int, total: int) -> None:
-        self.after(0, self._update_progress, message, current, total)
+        self._post(self._update_progress, message, current, total)
 
     def _update_progress(self, message: str, current: int, total: int) -> None:
         if self.progress_dialog is not None:

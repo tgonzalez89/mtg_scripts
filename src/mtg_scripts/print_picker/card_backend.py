@@ -230,7 +230,7 @@ class CardBackend(ABC):
                 self._inflight_cards.pop(key, None)
 
     def lookup_printings(self, card: CardRecord, progress_callback: ProgressCallback | None = None) -> list[CardRecord]:
-        key = self._freeze_value(card)
+        key = self._printing_cache_key(card)
         with self._request_lock:
             if key in self._printing_cache:
                 return self._printing_cache[key]
@@ -257,6 +257,14 @@ class CardBackend(ABC):
         finally:
             with self._request_lock:
                 self._inflight_printings.pop(key, None)
+
+    @staticmethod
+    def _printing_cache_key(card: CardRecord) -> tuple[object, ...]:
+        if card.get("id"):
+            return "id", card["id"]
+        if card.get("oracle_id"):
+            return "oracle_id", card["oracle_id"]
+        return "fields", card.get("name", ""), card.get("set", ""), card.get("collector_number", "")
 
     @staticmethod
     def _freeze_value(value: object) -> object:

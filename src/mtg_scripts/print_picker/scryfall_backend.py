@@ -80,43 +80,68 @@ class ScryfallBackend(CardBackend):
     def search_card(self, name: str, printing_hint: CardRecord | None = None) -> CardRecord | None:
         normalized_name = self._canonical_card_name(name)
         if not printing_hint:
-            oracle_index = self._oracle_index()
-            candidates = self._card_candidates(oracle_index, normalized_name)
-            if candidates:
-                return self._select_card(candidates)
-            default_index = self._default_index()
-            flavor_candidates = default_index["by_flavor_name"].get(normalized_name.casefold(), [])
-            if flavor_candidates:
-                return self._select_card(flavor_candidates)
-            candidates = self._card_candidates(default_index, normalized_name)
-            alias_card = self._select_card(candidates)
-            if alias_card:
-                oracle_id = alias_card.get("oracle_id") or next(
-                    (face.get("oracle_id") for face in alias_card.get("card_faces") or [] if face.get("oracle_id")),
-                    None,
-                )
-                oracle_cards = oracle_index["by_oracle_id"].get(str(oracle_id), [alias_card])
-                return self._select_card(oracle_cards)
-            return None
-
+            return self._search_unhinted_card(normalized_name)
         candidates = self._card_candidates(self._default_index(), normalized_name)
-        matches = [card for card in candidates if self._matches_printing_hint(card, printing_hint)]
-        return self._select_card(matches)
+        identity_matches = [card for card in candidates if self._matches_printing_identity(card, printing_hint)]
+        if not identity_matches:
+            return None
+        if printing_hint.get("is_foil") is True:
+            foil_matches = [card for card in identity_matches if "foil" in card.get("finishes", [])]
+            return self._select_card(foil_matches or identity_matches)
+        if printing_hint.get("is_foil") is False:
+            nonfoil_matches = [card for card in identity_matches if "nonfoil" in card.get("finishes", [])]
+            return self._select_card(nonfoil_matches)
+        nonfoil_matches = [card for card in identity_matches if "nonfoil" in card.get("finishes", [])]
+        return self._select_card(nonfoil_matches or identity_matches)
+
+    def _search_unhinted_card(self, normalized_name: str) -> CardRecord | None:
+        oracle_index = self._oracle_index()
+        candidates = self._card_candidates(oracle_index, normalized_name)
+        if candidates:
+            return self._select_card(candidates)
+        default_index = self._default_index()
+        flavor_candidates = default_index["by_flavor_name"].get(normalized_name.casefold(), [])
+        if flavor_candidates:
+            return self._select_card(flavor_candidates)
+        candidates = self._card_candidates(default_index, normalized_name)
+        alias_card = self._select_card(candidates)
+        if not alias_card:
+            return None
+        oracle_id = alias_card.get("oracle_id") or next(
+            (face.get("oracle_id") for face in alias_card.get("card_faces") or [] if face.get("oracle_id")),
+            None,
+        )
+        oracle_cards = oracle_index["by_oracle_id"].get(str(oracle_id), [alias_card])
+        return self._select_card(oracle_cards)
 
     @staticmethod
     def _matches_printing_hint(card: CardRecord, printing_hint: CardRecord) -> bool:
-        if printing_hint.get("set") and card.get("set", "").casefold() != printing_hint["set"].casefold():
+        if not ScryfallBackend._matches_printing_identity(card, printing_hint):
             return False
-        requested_number = printing_hint.get("collector_number")
-        if requested_number:
-            actual_number = str(card.get("collector_number", ""))
-            if actual_number.casefold() != str(requested_number).casefold():
-                return False
         if printing_hint.get("is_foil") is True:
             return "foil" in card.get("finishes", [])
         if printing_hint.get("is_foil") is False:
             return "nonfoil" in card.get("finishes", [])
         return True
+
+    @staticmethod
+    def _matches_printing_identity(card: CardRecord, printing_hint: CardRecord) -> bool:
+        if printing_hint.get("set") and card.get("set", "").casefold() != printing_hint["set"].casefold():
+            return False
+        requested_number = printing_hint.get("collector_number")
+        if requested_number:
+            actual_number = str(card.get("collector_number", ""))
+            if not ScryfallBackend._collector_number_matches(actual_number, requested_number):
+                return False
+        return True
+
+    @staticmethod
+    def _collector_number_matches(actual_number: str, requested_number: object) -> bool:
+        requested_number = str(requested_number).casefold()
+        actual_number = actual_number.casefold()
+        if actual_number == requested_number:
+            return True
+        return actual_number == f"{requested_number}\u2605"
 
     def get_printings(self, card: CardRecord, _progress_callback: ProgressCallback | None = None) -> list[CardRecord]:
         oracle_id = card.get("oracle_id") if card else None
@@ -265,13 +290,18 @@ class ScryfallBackend(CardBackend):
 
     def _card_candidates(self, index: dict[str, dict[str, list[CardRecord]]], name: str) -> list[CardRecord]:
         normalized_name = self._normalize_card_name(name).casefold()
-        candidates = index["by_name"].get(normalized_name)
-        if candidates:
-            return candidates
-        candidates = index["by_front_face_name"].get(normalized_name)
-        if candidates:
-            return candidates
-        return index["by_flavor_name"].get(normalized_name, [])
+        candidates = []
+        for candidate_group in (
+            index["by_name"].get(normalized_name, []),
+            index["by_front_face_name"].get(normalized_name, []),
+            index["by_flavor_name"].get(normalized_name, []),
+        ):
+            candidates.extend(candidate_group)
+        unique_candidates = {}
+        for candidate in candidates:
+            candidate_id = candidate.get("id") or id(candidate)
+            unique_candidates[candidate_id] = candidate
+        return list(unique_candidates.values())
 
     @staticmethod
     def _select_card(candidates: list[CardRecord]) -> CardRecord | None:
