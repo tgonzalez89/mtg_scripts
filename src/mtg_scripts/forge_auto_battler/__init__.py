@@ -1,0 +1,1 @@
+"""Automate Forge Adventure matches."""

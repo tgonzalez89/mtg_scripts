@@ -1,0 +1,143 @@
+# ---------------------------------------------------------------------------
+# Build system
+# ---------------------------------------------------------------------------
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+
+[project]
+name = "mtg-scripts"
+version = "1.0.0"
+description = "Command-line and graphical tools for Magic: The Gathering workflows."
+authors = [
+    { name = "Tomas Gonzalez Aragon", email = "tomas.gonz.arg@gmail.com" },
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.14"
+
+# ---------------------------------------------------------------------------
+# Project dependencies
+# ---------------------------------------------------------------------------
+
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "pyautogui",
+    "pyedhrec",
+    "pywinauto",
+    "python-docx",
+    "requests",
+    "selenium",
+    "wakepy",
+]
+
+[project.optional-dependencies]
+forge = ["tesserocr"]
+
+# Dependency groups (PEP 735) - preferred modern workflow for local/dev tooling.
+# These are not published as installable extras for downstream users.
+[dependency-groups]
+dev = [
+    "pre-commit>=4.2",
+    "pytest>=8.3",
+    "pytest-cov>=6.1",
+    "ruff>=0.16.8",
+    "ty>=0.0.1a8",
+]
+
+# Local wheel directory for packages that have no PyPI build for Windows
+# (e.g. tesserocr). Developers place the matching .whl file in wheels/ and uv
+# resolves it from there. The directory is git-ignored; see README for links.
+# Uncomment these lines in Windows.
+[tool.uv]
+find-links = ["./wheels"]
+
+[tool.uv.sources]
+tesserocr = { path = "wheels/tesserocr-2.11.0-cp314-cp314-win_amd64.whl" }
+
+# ---------------------------------------------------------------------------
+# Project scripts (entry points)
+# ---------------------------------------------------------------------------
+
+[project.scripts]
+build_base_deck = "mtg_scripts.cli:build_base_deck"
+calculate_to_purchase = "mtg_scripts.cli:calculate_to_purchase"
+cardmarket_optimizer = "mtg_scripts.cli:cardmarket_optimizer"
+cardmarket_scraper = "mtg_scripts.cli:cardmarket_scraper"
+shopping_wizard_optimizer = "mtg_scripts.cli:shopping_wizard_optimizer"
+gen_dummy_test_files = "mtg_scripts.cli:gen_dummy_test_files"
+cardtrader_optimizer = "mtg_scripts.cli:cardtrader_optimizer"
+deck_exporter = "mtg_scripts.cli:deck_exporter"
+forge_auto_battler = "mtg_scripts.cli:forge_auto_battler"
+moxfield_to_forge = "mtg_scripts.cli:moxfield_to_forge"
+mana_base_creator = "mtg_scripts.cli:mana_base_creator"
+count_occurrences = "mtg_scripts.cli:count_occurrences"
+filter_list = "mtg_scripts.cli:filter_list"
+make_mtg_table = "mtg_scripts.cli:make_mtg_table"
+vanilla = "mtg_scripts.cli:vanilla"
+
+[project.gui-scripts]
+print_picker = "mtg_scripts.cli:print_picker"
+
+# ---------------------------------------------------------------------------
+# Ruff - linting + formatting (replaces black, isort, flake8, pylint)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Absense of trailing comma is OK since formatter automatically adds them when needed.
+    "CPY001", # Allow files to not have a copyright statement. Remove this if your organization requires them.
+    "D1",     # Ignore docstring rules related to public modules, classes, methods, functions, etc.
+    "D203",   # Conflicts with D211.
+    "D213",   # Conflicts with D212.
+    "FIX002", # Allow TODO comments without requiring immediate resolution.
+    "S311",   # Allow `random` module usage for non-cryptographic purposes.
+    "T201",   # Allow print statements. They are used in the CLI and for debugging.
+    "TD",     # Allow TODO format/link/author variations globally.
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "ARG001",  # Allow unused arguments in functions (e.g., fixtures).
+    "ARG002",  # Allow unused arguments in methods (e.g., fixtures).
+    "ARG005",  # Allow unused arguments in class methods (e.g., fixtures).
+    "D1",      # Ignore docstring rules related to public modules, classes, methods, functions, etc.
+    "INP001",  # Tests don't need to be part of a package.
+    "PLR2004", # Magic values are often fine in tests.
+    "SLF001",  # Tests often need access to private members.
+    "S101",    # Plain assert is standard Pytest style.
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mtg-scripts"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# ---------------------------------------------------------------------------
+# ty - type checker (Astral)
+# ---------------------------------------------------------------------------
+
+[tool.ty.environment]
+root = ["src"]
+
+[tool.ty.rules]
+all = "error" # Enable strictest available rules
