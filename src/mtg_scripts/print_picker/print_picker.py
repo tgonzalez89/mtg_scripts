@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from PIL import Image
 
-    from .card_backend import CardItem, CardRecord, ImagePair
+    from .card_backend import CardBackend, CardItem, CardRecord, ImagePair
 
 
 class App(tk.Tk):
@@ -28,13 +28,13 @@ class App(tk.Tk):
         self.minsize(400, 400)
         self.state("zoomed")
         self.backend = ScryfallBackend()
-        self._backend_factories = {
+        self._backend_factories: dict[str, type[CardBackend]] = {
             "Magic: The Gathering": ScryfallBackend,
             "RiftBound": RiftCodexBackend,
         }
         self.current_game = "Magic: The Gathering"
         self.executor = ThreadPoolExecutor(max_workers=8)
-        self.items = []
+        self.items: list[CardItem] = []
         self.progress_dialog = None
         self.printing_chooser = None
         self.full_image_window = None
@@ -173,7 +173,7 @@ class App(tk.Tk):
             item["error"] = str(error)
         callback(item)
 
-    def _open_chooser(self, item: CardItem, viewer: object | None = None) -> None:
+    def _open_chooser(self, item: CardItem, viewer: FullImageWindow | None = None) -> None:
         def on_choose(updated_item: CardItem) -> None:
             self._printing_chosen(updated_item)
             if isinstance(viewer, FullImageWindow):
@@ -259,7 +259,7 @@ class App(tk.Tk):
             messagebox.showinfo("Export list", "Import cards first.")
             return
 
-        combined = {}
+        combined: dict[tuple[str, str, str], int] = {}
         for item in self.card_grid.get_display_items():
             source = item.get("chosen_print") or item.get("default_card") or item.get("card")
             set_code, collector_number = (

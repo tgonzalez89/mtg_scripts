@@ -2,13 +2,13 @@ import json
 from pathlib import Path
 
 with Path("en.json").open("r", encoding="utf-8") as cards_file:
-    cards_en = json.load(cards_file)
+    cards_en: dict[str, int] = json.load(cards_file)
 with Path("any.json").open("r", encoding="utf-8") as cards_file:
-    cards_any = json.load(cards_file)
+    cards_any: dict[str, int] = json.load(cards_file)
 
 
 total_diff = 0
-diffs = {}
+diffs: dict[str, int] = {}
 for card in sorted(set(list(cards_en.keys()) + list(cards_any.keys()))):
     if card not in cards_en or card not in cards_any:
         continue

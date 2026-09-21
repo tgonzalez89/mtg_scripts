@@ -3,8 +3,18 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final, TypedDict
 
-MAX_GENERATED_VALUE = 1000
+
+class OfferRecord(TypedDict):
+    total_price: float
+    price: float
+    shipping_price: float
+    amount: int
+    seller: str
+
+
+MAX_GENERATED_VALUE: Final = 1000
 
 
 @dataclass(frozen=True)
@@ -43,7 +53,7 @@ def generate_data(config: GenerationConfig) -> None:
         raise ValueError(message)
 
     # Generate sellers_db
-    sellers_db = {
+    sellers_db: dict[str, float] = {
         f"seller{i + 1}": round(random.uniform(config.seller_min_shipping_price, config.seller_max_shipping_price), 2)
         for i in range(config.num_sellers)
     }
@@ -52,20 +62,20 @@ def generate_data(config: GenerationConfig) -> None:
         json.dump(sellers_db, f, indent=2, sort_keys=True)
 
     # Generate offers_db
-    offers_db = {}
-    buy_list = {}
+    offers_db: dict[str, list[OfferRecord]] = {}
+    buy_list: dict[str, int] = {}
 
     for card_index in range(1, config.num_cards + 1):
         card_name = f"card-name-{card_index}"
         num_offers = random.randint(config.card_min_offers, config.card_max_offers)
-        offers = []
+        offers: list[OfferRecord] = []
         for _ in range(num_offers):
             seller = random.choice(list(sellers_db.keys()))
             shipping_price = sellers_db[seller]
             price = round(random.uniform(config.offer_min_price, config.offer_max_price), 2)
             amount = random.randint(config.offer_min_amount, config.offer_max_amount)
             total_price = round(price + shipping_price, 2)
-            offer = {
+            offer: OfferRecord = {
                 "total_price": total_price,
                 "price": price,
                 "shipping_price": shipping_price,

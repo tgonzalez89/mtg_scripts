@@ -3,11 +3,38 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Final, TypedDict
 
 import requests
 
-DEBUG = True
-HTTP_OK = 200
+DEBUG: Final[bool] = True
+HTTP_OK: Final[int] = 200
+
+
+class MoxfieldCardInfo(TypedDict, total=False):
+    layout: str
+    set: str
+    cn: str
+
+
+class MoxfieldCardEntry(TypedDict):
+    quantity: int
+    card: MoxfieldCardInfo
+
+
+class MoxfieldDeckData(TypedDict):
+    name: str
+    commanders: dict[str, MoxfieldCardEntry]
+    mainboard: dict[str, MoxfieldCardEntry]
+    sideboard: dict[str, MoxfieldCardEntry]
+    maybeboard: dict[str, MoxfieldCardEntry]
+
+
+class ProcessedCardEntry(TypedDict):
+    quantity: int
+    layout: str
+    set: str
+    cn: str
 
 
 def normalize_moxfield_deck_id(deck_id: str) -> str:
@@ -75,7 +102,7 @@ def get_default_output_dir(output_format: str) -> Path:
     return Path(appdata) / "Forge" / "decks" / "commander"
 
 
-def download_deck(deck_id: str) -> dict | None:
+def download_deck(deck_id: str) -> MoxfieldDeckData | None:
     """Download a deck from Moxfield API.
 
     Args:
@@ -90,7 +117,7 @@ def download_deck(deck_id: str) -> dict | None:
     try:
         response = requests.get(moxfield_api_url + deck_id, headers=headers, timeout=30)
         response.raise_for_status()
-        data = response.json()
+        data: MoxfieldDeckData = response.json()
         if DEBUG:
             Path("debug.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     except requests.HTTPError as error:
@@ -103,7 +130,15 @@ def download_deck(deck_id: str) -> dict | None:
         return data
 
 
-def extract_deck_sections(data: dict) -> tuple[str, dict, dict, dict, dict]:
+def extract_deck_sections(
+    data: MoxfieldDeckData,
+) -> tuple[
+    str,
+    dict[str, ProcessedCardEntry],
+    dict[str, ProcessedCardEntry],
+    dict[str, ProcessedCardEntry],
+    dict[str, ProcessedCardEntry],
+]:
     """Extract deck sections from Moxfield API response.
 
     Args:
@@ -116,9 +151,9 @@ def extract_deck_sections(data: dict) -> tuple[str, dict, dict, dict, dict]:
     """
     deck_name = data.get("name", "Unnamed Deck")
 
-    def process_section(section_data: dict) -> dict:
+    def process_section(section_data: dict[str, MoxfieldCardEntry]) -> dict[str, ProcessedCardEntry]:
         """Process a deck section, extracting quantity, layout, set, and card number info."""
-        processed = {}
+        processed: dict[str, ProcessedCardEntry] = {}
         for card_name, card_data in section_data.items():
             card_info = card_data.get("card", {})
             layout = card_info.get("layout", "")
@@ -140,7 +175,7 @@ def extract_deck_sections(data: dict) -> tuple[str, dict, dict, dict, dict]:
     return deck_name, commanders, mainboard, sideboard, maybeboard
 
 
-def format_card_list(cards: dict) -> str:
+def format_card_list(cards: dict[str, ProcessedCardEntry]) -> str:
     """Format a card dictionary into Forge card list format.
 
     Handles split cards (keeps ' // ') vs other double-faced cards (truncates at ' // ').
@@ -152,7 +187,7 @@ def format_card_list(cards: dict) -> str:
         str: Formatted card list
 
     """
-    lines = []
+    lines: list[str] = []
     for card_name in sorted(cards.keys()):
         card_info = cards[card_name]
         quantity = card_info["quantity"]
@@ -166,7 +201,7 @@ def format_card_list(cards: dict) -> str:
     return "\n".join(lines)
 
 
-def format_xmage_card_list(cards: dict) -> str:
+def format_xmage_card_list(cards: dict[str, ProcessedCardEntry]) -> str:
     """Format a card dictionary into XMage .dck format.
 
     Args:
@@ -176,7 +211,7 @@ def format_xmage_card_list(cards: dict) -> str:
         str: Formatted XMage card list
 
     """
-    lines = []
+    lines: list[str] = []
     for card_name in sorted(cards.keys()):
         card_info = cards[card_name]
         quantity = card_info["quantity"]
@@ -196,7 +231,11 @@ def format_xmage_card_list(cards: dict) -> str:
 
 
 def create_forge_dck_file(
-    output_path: Path, deck_name: str, commanders: dict, mainboard: dict, sideboard: dict
+    output_path: Path,
+    deck_name: str,
+    commanders: dict[str, ProcessedCardEntry],
+    mainboard: dict[str, ProcessedCardEntry],
+    sideboard: dict[str, ProcessedCardEntry],
 ) -> bool:
     """Create a .dck file in Forge format.
 
@@ -240,7 +279,12 @@ def create_forge_dck_file(
         return True
 
 
-def create_xmage_dck_file(output_path: Path, commanders: dict, mainboard: dict, sideboard: dict) -> bool:
+def create_xmage_dck_file(
+    output_path: Path,
+    commanders: dict[str, ProcessedCardEntry],
+    mainboard: dict[str, ProcessedCardEntry],
+    sideboard: dict[str, ProcessedCardEntry],
+) -> bool:
     """Create a .dck file in XMage format.
 
     Args:
@@ -255,7 +299,7 @@ def create_xmage_dck_file(output_path: Path, commanders: dict, mainboard: dict, 
     """
     content = format_xmage_card_list(mainboard)
 
-    side_lines = []
+    side_lines: list[str] = []
     for section in (commanders, sideboard):
         section_lines = format_xmage_card_list(section).splitlines()
         side_lines.extend(f"SB: {line}" for line in section_lines if line.strip())

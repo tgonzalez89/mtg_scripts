@@ -4,16 +4,37 @@ import csv
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Final, TypedDict
 
 import requests
 
-DEBUG_JSON = False  # Set to True to enable saving intermediate data as json files
-MIN_CARD_FIELDS = 2
-HTTP_OK = 200
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+DEBUG_JSON: Final[bool] = False  # Set to True to enable saving intermediate data as json files
+MIN_CARD_FIELDS: Final[int] = 2
+HTTP_OK: Final[int] = 200
 
 
-def write_json(path: Path, data: object) -> None:
-    """Write JSON data with a managed file handle."""
+class MoxfieldCardEntry(TypedDict):
+    quantity: int
+
+
+class MoxfieldDeckData(TypedDict):
+    commanders: dict[str, MoxfieldCardEntry]
+    sideboard: dict[str, MoxfieldCardEntry]
+    companions: dict[str, MoxfieldCardEntry]
+    mainboard: dict[str, MoxfieldCardEntry]
+    maybeboard: dict[str, MoxfieldCardEntry]
+
+
+def write_json(path: Path, data: Mapping[str, object] | Sequence[object]) -> None:
+    """Write JSON data with a managed file handle.
+
+    `data` is genuinely heterogeneous here (plain count mappings as well as raw
+    Moxfield API payloads are dumped through this helper for debugging), so a
+    precise structural type is not practical.
+    """
     with path.open("w", encoding="utf-8") as output_file:
         json.dump(data, output_file, indent=2, sort_keys=True)
 
@@ -38,14 +59,14 @@ def parse_deck_id_arg(deck_id_list: list[str]) -> tuple[str | tuple[str, ...], .
 
     Supports nested tuples using parentheses, e.g. "(id1,id2)".
     """
-    result = []
+    result: list[str | tuple[str, ...]] = []
     for raw_item in deck_id_list:
         item = raw_item.strip()
         # Allow both (id1,id2) and simple id forms
         if item.startswith("(") and item.endswith(")"):
             # Safely parse content inside parentheses as a tuple of strings
             inner = item[1:-1].strip()
-            ids = tuple(normalize_moxfield_deck_id(i.strip()) for i in inner.split(",") if i.strip())
+            ids: tuple[str, ...] = tuple(normalize_moxfield_deck_id(i.strip()) for i in inner.split(",") if i.strip())
             result.append(ids)
         else:
             result.append(normalize_moxfield_deck_id(item))
@@ -183,7 +204,7 @@ if args.purchased_file is not None:
     with Path(args.purchased_file).open("r", encoding="utf-8") as f:
         text = f.read()
     pattern = re.compile(r"([^\n]+)\s+\w+ (\d+)\s+\1", re.DOTALL)
-    matches = pattern.findall(text)
+    matches: list[tuple[str, str]] = pattern.findall(text)
     if len(matches) > 0:
         for match in matches:
             card_name = match[0].strip()
@@ -227,7 +248,7 @@ if DEBUG_JSON:
 
 # Calculate the cards that I have.
 
-have = copy.copy(owned_cards)
+have: dict[str, int] = copy.copy(owned_cards)
 for card_name, amount in purchased_cards.items():
     if card_name not in have:
         have[card_name] = amount
@@ -246,17 +267,21 @@ def download_deck(deck_id: str) -> tuple[dict[str, int], dict[str, int]]:
     headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"}
     response = requests.get(moxfield_api_url + deck_id, headers=headers, timeout=30)
     response.raise_for_status()
-    data = response.json()
+    data: MoxfieldDeckData = response.json()
     if DEBUG_JSON:
         write_json(Path(deck_id + ".json"), data)
-    deck = {card_name.lower(): card_data["quantity"] for card_name, card_data in data["commanders"].items()}
+    deck: dict[str, int] = {
+        card_name.lower(): card_data["quantity"] for card_name, card_data in data["commanders"].items()
+    }
     for card_name, card_data in data["sideboard"].items():
         deck[card_name.lower()] = deck.get(card_name.lower(), 0) + card_data["quantity"]
     for card_name, card_data in data["companions"].items():
         deck[card_name.lower()] = deck.get(card_name.lower(), 0) + card_data["quantity"]
     for card_name, card_data in data["mainboard"].items():
         deck[card_name.lower()] = deck.get(card_name.lower(), 0) + card_data["quantity"]
-    maybeboard = {card_name.lower(): card_data["quantity"] for card_name, card_data in data["maybeboard"].items()}
+    maybeboard: dict[str, int] = {
+        card_name.lower(): card_data["quantity"] for card_name, card_data in data["maybeboard"].items()
+    }
     return deck, maybeboard
 
 
@@ -264,8 +289,8 @@ cards_in_decks: dict[str, int] = {}
 considering_cards: dict[str, int] = {}
 for deck_id in args.want_deck_ids + args.have_deck_ids:
     if isinstance(deck_id, tuple):
-        main_decks = []
-        maybeboards = []
+        main_decks: list[dict[str, int]] = []
+        maybeboards: list[dict[str, int]] = []
         for dck_id in deck_id:
             mdck, mbbd = download_deck(dck_id)
             main_decks.append(mdck)
@@ -305,9 +330,9 @@ if DEBUG_JSON:
 
 # Calculate the cards that I need.
 
-need = copy.copy(cards_in_decks)
-need_decks = copy.copy(cards_in_decks)
-need_considering = {}
+need: dict[str, int] = copy.copy(cards_in_decks)
+need_decks: dict[str, int] = copy.copy(cards_in_decks)
+need_considering: dict[str, int] = {}
 if args.buy_considering:
     for card_name in considering_cards:
         if card_name not in need:
@@ -326,12 +351,11 @@ if DEBUG_JSON:
 
 # Calculate cards still needed after removing owned and purchased cards.
 
-to_purchase = {}
-avoided = {}
-avoided_owned = {}
-avoided_purchased = {}
-for card_name in need:
-    amount = need[card_name]
+to_purchase: dict[str, int] = {}
+avoided: dict[str, int] = {}
+avoided_owned: dict[str, int] = {}
+avoided_purchased: dict[str, int] = {}
+for card_name, amount in need.items():
     if card_name not in have:
         to_purchase[card_name] = amount
     elif amount > have[card_name]:
@@ -358,7 +382,7 @@ with Path(args.to_purchase_file).open("w") as f:
     for card_name, amount in sorted(to_purchase.items()):
         f.write(f"{amount} {card_name}\n")
 
-to_purchase_decks = {}
+to_purchase_decks: dict[str, int] = {}
 for card_name, amount in need_decks.items():
     if card_name not in have:
         to_purchase_decks[card_name] = amount
@@ -369,7 +393,7 @@ with Path(args.to_purchase_decks_file).open("w") as f:
     for card_name, amount in sorted(to_purchase_decks.items()):
         f.write(f"{amount} {card_name}\n")
 
-to_purchase_considering = {}
+to_purchase_considering: dict[str, int] = {}
 for card_name, amount in need_considering.items():
     if card_name not in have:
         to_purchase_considering[card_name] = amount

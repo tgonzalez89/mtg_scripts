@@ -9,11 +9,11 @@ def main() -> None:
     args = parser.parse_args()
 
     with args.input_file.open("r", encoding="utf-8") as f1:
-        lines1 = {line.rstrip("\n") for line in f1}
+        lines1: set[str] = {line.rstrip("\n") for line in f1}
     with args.remove_file.open("r", encoding="utf-8") as f2:
-        lines2 = {line.rstrip("\n") for line in f2}
+        lines2: set[str] = {line.rstrip("\n") for line in f2}
 
-    filtered = [line for line in lines1 if line not in lines2]
+    filtered: list[str] = [line for line in lines1 if line not in lines2]
 
     for line in filtered:
         print(line)

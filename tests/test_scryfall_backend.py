@@ -5,7 +5,10 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from mtg_scripts.print_picker.scryfall_backend import CardIndex
 
 from mtg_scripts.print_picker.scryfall_backend import SCRYFALL_INDEX_CACHE_VERSION, ScryfallBackend
 
@@ -134,9 +137,7 @@ def test_collector_numbers_are_exact_without_foil_hint() -> None:
     assert nonfoil_match is not None
     assert nonfoil_match["id"] == "7ed-231"
 
-    explicit_nonfoil_match = backend.search_card(
-        "Llanowar Elves", {"collector_number": "231", "is_foil": False}
-    )
+    explicit_nonfoil_match = backend.search_card("Llanowar Elves", {"collector_number": "231", "is_foil": False})
     assert explicit_nonfoil_match is not None
     assert explicit_nonfoil_match["id"] == "7ed-231"
 
@@ -174,21 +175,31 @@ def test_bulk_index_is_reused_from_serialized_cache(tmp_path: Path) -> None:
     default_version = backend._cache_name(default_uri)[:16]
     (backend.bulk_dir / f"oracle_cards-{oracle_version}.jsonl.gz").write_bytes(b"unused")
     (backend.bulk_dir / f"default_cards-{default_version}.jsonl.gz").write_bytes(b"unused")
-    expected_index = {
+    expected_index: CardIndex = {
         "by_name": {"birds of paradise": [{"id": "cached"}]},
         "by_front_face_name": {},
         "by_flavor_name": {},
         "by_oracle_id": {},
     }
-    backend._build_combined_index = lambda _oracle_path, _default_path: expected_index
+
+    def _fake_build_combined_index(_oracle_path: Path, _default_path: Path) -> CardIndex:
+        return expected_index
+
+    # Explicitly annotated to make the intentional monkeypatch of an instance
+    # method (bypassing `self`) clear to the type checker.
+    backend._build_combined_index: Callable[[Path, Path], CardIndex] = _fake_build_combined_index
 
     assert backend._card_index() == expected_index
     combined_version = backend._cache_name(f"{download_uri}\n{default_uri}")[:16]
     index_path = backend.bulk_dir / f"cards-{combined_version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
     assert index_path.exists()
 
+    def _fail_if_rebuilt(*_args: object) -> CardIndex:
+        rebuilt_msg = "index rebuilt"
+        raise AssertionError(rebuilt_msg)
+
     cached_backend = ScryfallBackend(cache_dir=tmp_path)
-    cached_backend._build_combined_index = lambda *_args: (_ for _ in ()).throw(AssertionError("index rebuilt"))
+    cached_backend._build_combined_index: Callable[..., CardIndex] = _fail_if_rebuilt
     assert cached_backend._card_index() == expected_index
 
 

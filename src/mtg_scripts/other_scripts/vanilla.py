@@ -11,21 +11,44 @@ from __future__ import annotations
 import argparse
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, TypedDict, cast
 
 import requests
 
-DEFAULT_QUERY = "type:creature commander:wg (game:paper) is:vanilla"
-DEFAULT_OUTPUT = Path(__file__).with_name("vanilla_creatures.txt")
+DEFAULT_QUERY: Final = "type:creature commander:wg (game:paper) is:vanilla"
+DEFAULT_OUTPUT: Final = Path(__file__).with_name("vanilla_creatures.txt")
 
 
-def fetch_scryfall_cards(query: str = DEFAULT_QUERY) -> list[dict[str, Any]]:
+class ScryfallCard(TypedDict, total=False):
+    """Subset of the Scryfall card fields this script reads."""
+
+    name: str
+    type_line: str
+    mana_value: float | int | str
+    cmc: float
+    mana_cost: str
+    power: str
+    toughness: str
+
+
+class RankedCard(TypedDict):
+    """A vanilla creature annotated with its computed efficiency ranking."""
+
+    name: str
+    mana_value: int
+    mana_cost: str
+    power: int
+    toughness: int
+    efficiency: float
+
+
+def fetch_scryfall_cards(query: str = DEFAULT_QUERY) -> list[ScryfallCard]:
     """Fetch all cards returned by a Scryfall search query."""
-    cards: list[dict[str, Any]] = []
+    cards: list[ScryfallCard] = []
     page = 1
 
     while True:
-        params = {
+        params: dict[str, str | int] = {
             "q": query,
             "page": page,
             "order": "cmc",
@@ -39,9 +62,10 @@ def fetch_scryfall_cards(query: str = DEFAULT_QUERY) -> list[dict[str, Any]]:
             timeout=30,
         )
         response.raise_for_status()
-        payload = response.json()
+        # Scryfall's JSON payload shape beyond the fields we read is dynamic/undocumented here.
+        payload: dict[str, Any] = response.json()
 
-        data = payload.get("data", [])
+        data = cast("list[ScryfallCard]", payload.get("data", []))
         cards.extend(data)
 
         if not payload.get("has_more", False):
@@ -59,7 +83,7 @@ def fetch_scryfall_cards(query: str = DEFAULT_QUERY) -> list[dict[str, Any]]:
     return cards
 
 
-def is_vanilla_creature(card: dict[str, Any]) -> bool:
+def is_vanilla_creature(card: ScryfallCard) -> bool:
     type_line = str(card.get("type_line", "")).lower()
 
     if not type_line:
@@ -71,7 +95,7 @@ def is_vanilla_creature(card: dict[str, Any]) -> bool:
     return "creature" in type_line
 
 
-def parse_numeric_value(value: object) -> int | None:
+def parse_numeric_value(value: float | str | None) -> int | None:
     if value is None:
         return None
 
@@ -89,9 +113,9 @@ def parse_numeric_value(value: object) -> int | None:
 
 
 def rank_cards(
-    cards: list[dict[str, Any]], min_mana_value: int | None = None, min_power: int | None = None
-) -> list[dict[str, Any]]:
-    ranked: list[dict[str, Any]] = []
+    cards: list[ScryfallCard], min_mana_value: int | None = None, min_power: int | None = None
+) -> list[RankedCard]:
+    ranked: list[RankedCard] = []
 
     for card in cards:
         if not is_vanilla_creature(card):
@@ -116,14 +140,14 @@ def rank_cards(
         efficiency = float(power) / float(mana_value) if mana_value else 0.0
 
         ranked.append(
-            {
-                "name": card.get("name", "Unknown"),
-                "mana_value": mana_value,
-                "mana_cost": card.get("mana_cost", ""),
-                "power": power,
-                "toughness": toughness,
-                "efficiency": efficiency,
-            }
+            RankedCard(
+                name=card.get("name", "Unknown"),
+                mana_value=mana_value,
+                mana_cost=card.get("mana_cost", ""),
+                power=power,
+                toughness=toughness,
+                efficiency=efficiency,
+            )
         )
 
     ranked.sort(
@@ -144,14 +168,14 @@ def format_efficiency(value: float) -> str:
     return text
 
 
-def format_card_line(card: dict[str, Any]) -> str:
+def format_card_line(card: RankedCard) -> str:
     return (
         f"{card['name']} | {card['mana_value']} | {card['mana_cost']} | "
         f"{card['power']}/{card['toughness']} | {format_efficiency(card['efficiency'])}"
     )
 
 
-def write_output(cards: list[dict[str, Any]], output_path: Path) -> None:
+def write_output(cards: list[RankedCard], output_path: Path) -> None:
     lines = [format_card_line(card) for card in cards]
     output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 

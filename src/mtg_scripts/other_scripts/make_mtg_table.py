@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -10,9 +12,9 @@ from docx.oxml.ns import qn
 from docx.shared import Mm, Pt
 
 if TYPE_CHECKING:
-    from docx.table import Table
+    from docx.table import Table, _Cell
 
-ROWS = [
+ROWS: Final[tuple[tuple[str, str, str], ...]] = (
     ("Basic lands", "100", "20 per type"),
     ("Dual lands", "40", "10 per cycle"),
     ("Other lands", "5", ""),
@@ -23,10 +25,10 @@ ROWS = [
     ("Players", "4", ""),
     ("Packs per player", "4", ""),
     ("Cards per booster", "12", ""),
-]
+)
 
 
-def _set_cell_borders(cell: object) -> None:
+def _set_cell_borders(cell: _Cell) -> None:
     """Remove visible borders from one table cell."""
     cell_properties = object.__getattribute__(cell, "_tc").get_or_add_tcPr()
     for tag in ("top", "bottom", "left", "right"):

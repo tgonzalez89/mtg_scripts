@@ -57,7 +57,7 @@ class PrintingChooser(tk.Toplevel):
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.card_grid.destroy()
         self.progress_dialog = None
-        self.card_item = {}
+        self.card_item = cast("CardItem", {})
         self.backend = None
         self.on_choose = None
         self.on_open_full_image = None
@@ -72,6 +72,8 @@ class PrintingChooser(tk.Toplevel):
             self._post(self.card_grid.set_items, [])
             self._post(self._close_progress)
             return
+        if TYPE_CHECKING:
+            assert self.backend is not None
         try:
             printings = self.backend.lookup_printings(card, self._report_progress)
             self._post(self._set_printings, printings)
@@ -97,6 +99,8 @@ class PrintingChooser(tk.Toplevel):
             self.progress_dialog = None
 
     def _set_printings(self, printings: list[CardRecord]) -> None:
+        if TYPE_CHECKING:
+            assert self.backend is not None
         items: list[CardItem] = []
         for printing in printings:
             printing["name"] = self.backend.card_name(printing) or self.card_item["name"]
@@ -109,6 +113,8 @@ class PrintingChooser(tk.Toplevel):
         callback(printing)
 
     def _load_printing_image(self, printing: CardRecord, callback: Callable[[CardRecord], None]) -> None:
+        if TYPE_CHECKING:
+            assert self.backend is not None
         try:
             images = self._available_images(self.backend.load_card_images(printing))
             printing["images"] = images
@@ -125,6 +131,8 @@ class PrintingChooser(tk.Toplevel):
         messagebox.showerror("Printings", str(error), parent=self)
 
     def _choose(self, printing: CardRecord) -> None:
+        if TYPE_CHECKING:
+            assert self.on_choose is not None
         self.card_item["chosen_print"] = printing
         self.on_choose(self.card_item)
         self.destroy()

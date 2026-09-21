@@ -3,14 +3,14 @@ import tkinter as tk
 from collections.abc import Callable
 from dataclasses import dataclass
 from tkinter import ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from PIL import Image
 
 if TYPE_CHECKING:
     from .card_backend import CardItem
 
-MIN_FACES = 2
+MIN_FACES: Final[int] = 2
 
 type CardCallback = Callable[["Card", tk.Event[tk.Misc]], None]
 type ZoomCallback = Callable[[int], None]
@@ -42,8 +42,8 @@ class Card(ttk.Frame):
         self._on_left_click = interaction.on_left_click
         self._on_right_click = interaction.on_right_click
         self._image = item.get("image")
-        self._image_ref = None
-        self._render_cache = {}
+        self._image_ref: tk.PhotoImage | None = None
+        self._render_cache: dict[tuple[int, int], tk.PhotoImage] = {}
 
         self.header = ttk.Frame(self)
         self.header.pack(fill="x", padx=5, pady=(5, 0))

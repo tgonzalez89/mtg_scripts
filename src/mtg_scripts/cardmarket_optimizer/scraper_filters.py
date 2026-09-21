@@ -1,4 +1,20 @@
-filters = {
+from typing import Final, TypedDict
+
+
+class ScraperFilters(TypedDict):
+    sellerCountry: list[int]
+    sellerType: list[int]
+    sellerReputation: int | None
+    maxShippingTime: int | None
+    language: list[int]
+    minCondition: int | None
+    isFoil: str | None
+    isSigned: str | None
+    isAltered: str | None
+    amount: int | None
+
+
+filters: Final[ScraperFilters] = {
     "sellerCountry": [
         1,  # Austria,
         2,  # Belgium,

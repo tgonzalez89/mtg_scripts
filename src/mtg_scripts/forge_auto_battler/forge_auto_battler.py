@@ -8,6 +8,7 @@ import tkinter as tk
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
+from typing import Final
 
 import cv2
 import numpy as np
@@ -24,15 +25,15 @@ from wakepy import keep
 # Document better how to setup Forge and that Adventure mode is the required mode, and to use windowed mode.
 
 # Config variables
-tesser_data = r"C:\Program Files\Tesseract-OCR\tessdata"
-VERBOSE = True  # Set to True to enable info messages
-DEBUG = True  # Set to True to enable debug messages
-DEBUG_IMG = True  # Set to True to enable saving debug screenshots.
-FOUR_PLAYERS = 4
+tesser_data: Final = r"C:\Program Files\Tesseract-OCR\tessdata"
+VERBOSE: Final = True  # Set to True to enable info messages
+DEBUG: Final = True  # Set to True to enable debug messages
+DEBUG_IMG: Final = True  # Set to True to enable saving debug screenshots.
+FOUR_PLAYERS: Final = 4
 
 # Global variables
 window_state: dict[str, application.WindowSpecification] = {}
-ASSET_DIR = Path(__file__).resolve().parent
+ASSET_DIR: Final[Path] = Path(__file__).resolve().parent
 type Coordinates = tuple[int, int]
 type Region = tuple[int, int, int, int]
 type MatchBox = tuple[int, int, int, int]
@@ -223,7 +224,7 @@ def find_text_in_screen(
 
     tesserocr = importlib.import_module("tesserocr")
 
-    variables = {}
+    variables: dict[str, str] = {}
     if allowlist:
         variables["tessedit_char_whitelist"] = allowlist
     with tesserocr.PyTessBaseAPI(path=tesser_data, psm=tesserocr.PSM.SINGLE_LINE, variables=variables) as tess_api:

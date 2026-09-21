@@ -3,11 +3,34 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict
 
-MIN_CARD_FIELDS = 2
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+MIN_CARD_FIELDS: Final = 2
 
 
-def write_json(path: Path, data: object) -> None:
+class OfferRecord(TypedDict):
+    total_price: float
+    price: float
+    shipping_price: float
+    amount: int
+    seller: str
+
+
+class SelectedOfferRecord(OfferRecord):
+    selected_amount: NotRequired[int]
+    price_per_card: NotRequired[float]
+    card_name: NotRequired[str]
+
+
+class SellerAvailability(TypedDict):
+    shipping_price: float
+    cards_available: int
+
+
+def write_json(path: Path, data: Mapping[str, object] | Sequence[object]) -> None:
     """Write JSON data with a managed file handle."""
     with path.open("w", encoding="utf-8") as output_file:
         json.dump(data, output_file, indent=2, sort_keys=True)
@@ -62,12 +85,12 @@ with Path(args.card_list).open("r", encoding="utf-8") as fp:
             card_list[card_name] = card_list.get(card_name, 0) + amount
 
 with Path(args.offers_database).open("r", encoding="utf-8") as offers_file:
-    offers_database: dict[str, list[dict[str, int | float | str]]] = json.load(offers_file)
+    offers_database: dict[str, list[SelectedOfferRecord]] = json.load(offers_file)
 
 with Path(args.sellers_database).open("r", encoding="utf-8") as sellers_file:
     sellers_database: dict[str, float] = json.load(sellers_file)
 
-sellers_db_cards_available: dict[str, dict[str, int | float]] = {
+sellers_db_cards_available: dict[str, SellerAvailability] = {
     seller: {"shipping_price": shipping_price, "cards_available": 0}
     for seller, shipping_price in sellers_database.items()
 }
@@ -85,12 +108,12 @@ for card_name, amount in card_list.items():
 
 
 def calc_total_prices(
-    selected_offers: dict[str, list[dict[str, int | float | str]]],
+    selected_offers: dict[str, list[SelectedOfferRecord]],
 ) -> tuple[float, float, float, set[str]]:
     total_price = 0.0
     items_price = 0.0
     shipping_price = 0.0
-    seen_sellers = set()
+    seen_sellers: set[str] = set()
 
     for offers in selected_offers.values():
         for offer in offers:
@@ -108,16 +131,16 @@ def calc_total_prices(
     return round(total_price, 2), round(items_price, 2), round(shipping_price, 2), seen_sellers
 
 
-def average_offer_by_key(offers: list[dict[str, int | float | str]], key: str) -> float:
+def average_offer_by_key(offers: list[SelectedOfferRecord], key: str) -> float:
     """Compute average of 'key' from a list of offers."""
-    prices = sorted(float(offer[key]) for offer in offers if key in offer)
+    prices = sorted(float(dict(offer)[key]) for offer in offers if key in offer)
     prices = prices[: math.ceil(len(prices) / 2)]
     return round(sum(prices) / len(prices), 2) if prices else 0.0
 
 
 def get_best_offer(
-    offers: list[dict[str, int | float | str]], amount: int, selected_sellers: set[str]
-) -> dict[str, int | float | str] | None:
+    offers: list[SelectedOfferRecord], amount: int, selected_sellers: set[str]
+) -> SelectedOfferRecord | None:
     # Beware: This function modifies the offers list and the items inside it.
     for offer in offers:
         # Select amount of cards needed from this offer.
@@ -139,10 +162,10 @@ def get_best_offer(
 
 def run_algo(
     card_list: dict[str, int],
-    offers_database: dict[str, list[dict[str, int | float | str]]],
-    selected_offers: dict[str, list[dict[str, int | float | str]]] | None = None,
+    offers_database: dict[str, list[SelectedOfferRecord]],
+    selected_offers: dict[str, list[SelectedOfferRecord]] | None = None,
     selected_sellers: set[str] | None = None,
-) -> tuple[dict[str, list[dict[str, int | float | str]]], set[str]]:
+) -> tuple[dict[str, list[SelectedOfferRecord]], set[str]]:
     # Sort by least offers, then most amount of cards in card list and then by most expensive.
     # Helps prioritizing selecting sellers with more copies of a card and cheaper sellers for expensive cards.
     card_list = dict(
@@ -178,7 +201,7 @@ def run_algo(
 selected_offers, selected_sellers = run_algo(card_list, offers_database)
 
 
-selected_offers_by_seller: dict[str, list[dict[str, int | float | str]]] = {}
+selected_offers_by_seller: dict[str, list[SelectedOfferRecord]] = {}
 for card_name, offers in selected_offers.items():
     for offer in offers:
         if offer["seller"] not in selected_offers_by_seller:

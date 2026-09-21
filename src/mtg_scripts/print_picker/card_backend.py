@@ -4,22 +4,27 @@ import json
 import re
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Final, TypedDict, cast
 
 import requests
 from PIL import Image
 
-MAX_EXTENSION_LENGTH = 5
-IMAGE_LOADING_ENABLED = True
+MAX_EXTENSION_LENGTH: Final[int] = 5
+IMAGE_LOADING_ENABLED: Final[bool] = True
+
+# Arbitrary JSON returned by the card APIs (bulk metadata, set lookups, etc.);
+# genuinely dynamic, so it is modeled structurally rather than with a TypedDict.
+type JSONValue = bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"] | None
 
 
 class CardRecord(TypedDict, total=False):
     """Common fields used by card API records."""
 
+    id: str
     name: str
     set: str
     set_name: str
@@ -45,6 +50,8 @@ class CardRecord(TypedDict, total=False):
     face_index: int
     _source_item: CardItem
     riftbound_id: str
+    is_foil: bool
+    _is_default: bool
 
 
 class CardItem(CardRecord, total=False):
@@ -79,12 +86,12 @@ class CardBackend(ABC):
         self.session = session or requests.Session()
         self.session.headers.update({"User-Agent": self.user_agent})
         self._request_lock = threading.Lock()
-        self._inflight_json = {}
-        self._inflight_images = {}
-        self._card_cache = {}
-        self._inflight_cards = {}
-        self._printing_cache = {}
-        self._inflight_printings = {}
+        self._inflight_json: dict[str, Future[JSONValue]] = {}
+        self._inflight_images: dict[str, Future[Image.Image]] = {}
+        self._card_cache: dict[tuple[str, object], CardRecord | None] = {}
+        self._inflight_cards: dict[tuple[str, object], Future[CardRecord | None]] = {}
+        self._printing_cache: dict[tuple[str, ...], list[CardRecord]] = {}
+        self._inflight_printings: dict[tuple[str, ...], Future[list[CardRecord]]] = {}
 
     @property
     @abstractmethod
@@ -104,14 +111,14 @@ class CardBackend(ABC):
             extension = ".img"
         return self.image_cache_dir / f"{self._cache_name(url)}{extension}"
 
-    def request_json(self, url: str) -> object:
+    def request_json(self, url: str) -> JSONValue:
         return self._request_json_cached(
             url,
             self._json_cache_path(url),
             lambda: self.session.get(url, timeout=20),
         )
 
-    def request_json_post(self, url: str, payload: dict[str, str | int | float | bool | None]) -> object:
+    def request_json_post(self, url: str, payload: Mapping[str, str | int | float | bool | None]) -> JSONValue:
         payload_key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         cache_key = f"POST {url}\n{payload_key}"
         return self._request_json_cached(
@@ -122,7 +129,7 @@ class CardBackend(ABC):
 
     def _request_json_cached(
         self, cache_key: str, cache_path: Path, request: Callable[[], requests.Response]
-    ) -> object:
+    ) -> JSONValue:
         if cache_path.exists():
             with cache_path.open("r", encoding="utf-8") as cache_file:
                 return json.load(cache_file)
@@ -268,7 +275,7 @@ class CardBackend(ABC):
         return [printing.copy() for printing in printings]
 
     @staticmethod
-    def _printing_cache_key(card: CardRecord) -> tuple[object, ...]:
+    def _printing_cache_key(card: CardRecord) -> tuple[str, ...]:
         if card.get("id"):
             return "id", card["id"]
         if card.get("oracle_id"):
@@ -277,6 +284,8 @@ class CardBackend(ABC):
 
     @staticmethod
     def _freeze_value(value: object) -> object:
+        # `value` is an arbitrary printing hint (nested dict/list/set of JSON-like
+        # scalars) being turned into a hashable cache key; no fixed shape applies.
         if isinstance(value, dict):
             return tuple(sorted((key, CardBackend._freeze_value(item)) for key, item in value.items()))
         if isinstance(value, (list, tuple)):
@@ -318,7 +327,7 @@ class CardBackend(ABC):
         raise NotImplementedError
 
     def lookup_cards(
-        self, items: list[CardItem], _progress_callback: ProgressCallback | None = None
+        self, items: Sequence[CardItem], _progress_callback: ProgressCallback | None = None
     ) -> list[tuple[CardRecord | None, Exception | None]]:
         """Resolve imported items, returning (card, error) pairs in input order."""
         if not items:
@@ -337,7 +346,7 @@ class CardBackend(ABC):
     def card_name(card: CardRecord) -> str:
         """Return the display name for a card record."""
 
-    def sort_items(self, items: list[CardItem], *, include_name: bool = False) -> list[CardItem]:
+    def sort_items(self, items: Sequence[CardItem], *, include_name: bool = False) -> list[CardItem]:
         return sorted(items, key=lambda item: self._sort_key(item, include_name=include_name))
 
     def _sort_key(
@@ -350,23 +359,23 @@ class CardBackend(ABC):
         return name_key, self._release_sort_key(release_date), set_code.casefold(), collector_key
 
     @staticmethod
-    def _release_sort_key(release_date: object) -> float:
+    def _release_sort_key(release_date: str) -> float:
         if not release_date:
             return float("inf")
         try:
-            timestamp = datetime.fromisoformat(str(release_date)).timestamp()
+            timestamp = datetime.fromisoformat(release_date).timestamp()
         except ValueError:
             return float("inf")
         return -timestamp
 
     @staticmethod
-    def _collector_sort_key(collector_number: object) -> tuple[tuple[int, int | str], ...]:
-        parts = re.findall(r"\d+|\D+", str(collector_number))
+    def _collector_sort_key(collector_number: str) -> tuple[tuple[int, int | str], ...]:
+        parts = re.findall(r"\d+|\D+", collector_number)
         return tuple((0, int(part)) if part.isdigit() else (1, part.casefold()) for part in parts)
 
     @staticmethod
     @abstractmethod
-    def card_sort_fields(card: CardRecord) -> tuple[str, object, str, object]:
+    def card_sort_fields(card: CardRecord) -> tuple[str, str, str, str]:
         """Return name, release date, set code, and collector number for sorting."""
 
     @staticmethod

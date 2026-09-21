@@ -3,17 +3,30 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Mapping  # noqa: TC003 (needed at runtime: evaluated in a module-level variable annotation)
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from types import MappingProxyType
+from typing import Final, NotRequired, TypedDict
 
 import requests
 
-SCRYFALL_API_URL = "https://api.scryfall.com/cards/search"
-SCRYFALL_HEADERS = {"User-Agent": "MyMTGApp/1.0 (contact@example.com)", "Accept": "application/json"}
-SCRYFALL_BASE_QUERY = "game:paper legal:commander order:{price_source} dir:asc"
-HTTP_OK = 200
+SCRYFALL_API_URL: Final[str] = "https://api.scryfall.com/cards/search"
+SCRYFALL_HEADERS: Final[Mapping[str, str]] = MappingProxyType(
+    {"User-Agent": "MyMTGApp/1.0 (contact@example.com)", "Accept": "application/json"}
+)
+SCRYFALL_BASE_QUERY: Final[str] = "game:paper legal:commander order:{price_source} dir:asc"
+HTTP_OK: Final[int] = 200
+
+
+class ScryfallCard(TypedDict):
+    """Subset of the Scryfall card JSON fields actually used in this module."""
+
+    name: str
+    oracle_text: str
+    color_identity: NotRequired[list[str]]
+    prices: dict[str, str | None]
 
 
 @dataclass(frozen=True)
@@ -142,7 +155,7 @@ def parse_arguments() -> argparse.Namespace:
 # Query Scryfall API for cards based on a query string.
 # Use a local cache keyed by the query hash.
 # If the cache file exists, load the results from the cache instead of querying Scryfall again.
-def query_scryfall(query: str) -> list[dict[str, object]]:
+def query_scryfall(query: str) -> list[ScryfallCard]:
     query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
 
     # Try to load the results from the cache file.
@@ -154,7 +167,7 @@ def query_scryfall(query: str) -> list[dict[str, object]]:
 
     params = {"q": query}
     response = requests.get(f"{SCRYFALL_API_URL}", params=params, headers=SCRYFALL_HEADERS, timeout=30)
-    response_json = {"data": []}
+    response_json: dict[str, list[ScryfallCard]] = {"data": []}
 
     if response.status_code == HTTP_OK:
         response_json = response.json()
@@ -170,8 +183,8 @@ def query_scryfall(query: str) -> list[dict[str, object]]:
 
 
 # Get all cards from Scryfall based on groups.
-def populate_cards_from_groups(groups: list[str], price_source: str) -> dict[str, list[dict[str, object]]]:
-    cards_per_group = {}
+def populate_cards_from_groups(groups: list[str], price_source: str) -> dict[str, list[ScryfallCard]]:
+    cards_per_group: dict[str, list[ScryfallCard]] = {}
     for group in groups:
         query = f"{SCRYFALL_BASE_QUERY.format(price_source=price_source)} {group}"
         data = query_scryfall(query)
@@ -180,8 +193,8 @@ def populate_cards_from_groups(groups: list[str], price_source: str) -> dict[str
 
 
 # Get all cards from Scryfall based on exact names.
-def populate_cards_from_names(names: list[str], price_source: str) -> list[dict[str, object]]:
-    cards = []
+def populate_cards_from_names(names: list[str], price_source: str) -> list[ScryfallCard]:
+    cards: list[ScryfallCard] = []
     for name in names:
         query = f'{SCRYFALL_BASE_QUERY.format(price_source=price_source)} !"{name}"'
         data = query_scryfall(query)
@@ -203,9 +216,7 @@ def _fetches_allowed_color(oracle_text: str, colors: str, *, allow_off_color_lan
     return bool(matching_colors) if allow_off_color_lands else len(found_colors) == len(matching_colors)
 
 
-def should_remove_fetchland(
-    card: dict[str, object], group: str | None, colors: str, *, allow_off_color_lands: bool
-) -> bool:
+def should_remove_fetchland(card: ScryfallCard, group: str | None, colors: str, *, allow_off_color_lands: bool) -> bool:
     if not group:
         query = f'{SCRYFALL_BASE_QUERY.format(price_source="usd")} otag:fetchland !"{card["name"]}"'
         data = query_scryfall(query)
@@ -221,8 +232,8 @@ def should_remove_fetchland(
 
 # Function to check if the color identity of a card matches the deck's colors (is a subset of the deck's colors).
 # If the card has no color identity, it is considered to match any color identity.
-def is_color_identity_matching(card: dict[str, object], colors: str) -> bool:
-    color_identity = cast("list[str]", card.get("color_identity", []))
+def is_color_identity_matching(card: ScryfallCard, colors: str) -> bool:
+    color_identity = card.get("color_identity", [])
     if not color_identity:
         return True
     return {c.casefold() for c in color_identity}.issubset(set(colors))
@@ -230,11 +241,11 @@ def is_color_identity_matching(card: dict[str, object], colors: str) -> bool:
 
 # Process the cards to get their prices and filter out any that should be removed based on the user preferences.
 def process_cards(
-    cards: list[dict[str, object]],
+    cards: list[ScryfallCard],
     config: CardFilterConfig,
     group: str | None,
 ) -> dict[str, float]:
-    processed_cards = {}
+    processed_cards: dict[str, float] = {}
 
     for card in cards:
         # Filter out cards by color identity.
@@ -269,13 +280,13 @@ def process_cards(
     return processed_cards
 
 
-def get_price(price_source: str, card: dict[str, object]) -> float:
-    prices = cast("dict[str, str | None]", card["prices"])
+def get_price(price_source: str, card: ScryfallCard) -> float:
+    prices = card["prices"]
     direct_price = prices.get(price_source)
     if direct_price is not None:
         return float(direct_price)
 
-    possible_prices = []
+    possible_prices: list[float] = []
     for price_name, price in prices.items():
         if price_name.startswith(price_source) and price is not None:
             possible_prices.append(float(price))
@@ -395,7 +406,7 @@ def main() -> None:
         allow_off_color_lands=args.allow_off_color_lands,
     )
     groups_cards, specific_lands_cards = _filter_candidates(args, config)
-    lands = []
+    lands: list[str] = []
     total_price = 0.0
     total_price = _add_specific_lands(args, lands, total_price, specific_lands_cards)
     total_price = _add_land_groups(args, lands, total_price, groups_cards)

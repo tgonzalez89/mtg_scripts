@@ -2,15 +2,15 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from tkinter import ttk
-from typing import cast
+from typing import Final, cast
 
 from PIL import Image, ImageTk
 
 type ImageAction = Callable[[int, "FullImageWindow"], None]
 type FaceAction = Callable[[int, int], None]
 type ImageLoader = Callable[[int, "FullImageWindow"], None]
-MIN_FACES = 2
-FOUR_BUTTON = 4
+MIN_FACES: Final[int] = 2
+FOUR_BUTTON: Final[int] = 4
 
 
 @dataclass(frozen=True)
@@ -38,19 +38,22 @@ class FullImageWindow(tk.Toplevel):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.images = [list(image) if isinstance(image, (list, tuple)) else [image] for image in images]
+        self.images: list[list[Image.Image]] = cast(
+            "list[list[Image.Image]]",
+            [list(image) if isinstance(image, (list, tuple)) else [image] for image in images],
+        )
         self.index = options.index
         self.action_callback = options.action_callback
         self.face_callback = options.face_callback
         self.image_loader = options.image_loader
-        self._loading_indices = set()
+        self._loading_indices: set[int] = set()
         self._closed = False
         self.face_index = 0
         self.zoom = 1.0
         self.offset_x = 0
         self.offset_y = 0
-        self._drag_data = None
-        self._image_ref = None
+        self._drag_data: tuple[int, int] | None = None
+        self._image_ref: ImageTk.PhotoImage | None = None
 
         self.canvas = tk.Canvas(self, bg="black")
         self.canvas.pack(fill="both", expand=True)
@@ -116,7 +119,9 @@ class FullImageWindow(tk.Toplevel):
     def update_current_images(self, images: Image.Image | Sequence[Image.Image]) -> None:
         if self._closed:
             return
-        self.images[self.index] = list(images) if isinstance(images, (list, tuple)) else [images]
+        self.images[self.index] = cast(
+            "list[Image.Image]", list(images) if isinstance(images, (list, tuple)) else [images]
+        )
         self._loading_indices.discard(self.index)
         self.face_index = 0
         if hasattr(self, "face_button"):
@@ -155,7 +160,7 @@ class FullImageWindow(tk.Toplevel):
                 tags="STATUS",
             )
             return
-        image = cast("Image.Image", self.images[self.index][self.face_index])
+        image = self.images[self.index][self.face_index]
         self.canvas.delete("STATUS")
         width = max(1, int(image.width * self.zoom))
         height = max(1, int(image.height * self.zoom))

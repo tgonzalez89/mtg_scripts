@@ -1,3 +1,11 @@
+"""Steps to Locate Your Firefox Profile Folder.
+
+1. Open Firefox.
+2. In the address bar, type: about:profiles and press Enter.
+3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
+4. Under that profile, find the "Root Directory" path.
+"""
+
 # TODO: Script that optimizes a 'wants' list.
 # Input: cardmarket wants list id or maybe link?
 # The optimizer repeatedly adds worthwhile seller groups to the cart.
@@ -19,7 +27,7 @@ import argparse
 import re
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from selenium import webdriver
 from selenium.common.exceptions import (
@@ -39,20 +47,13 @@ from .shopping_wizard_optimizer_filter import filters
 
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
+    from selenium.webdriver.remote.webelement import WebElement
 
-DEBUG = True
-FOUR_ARTICLES = 4
-TWO_ARTICLES = 2
+DEBUG: Final = True
+FOUR_ARTICLES: Final = 4
+TWO_ARTICLES: Final = 2
 
 # CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
-
-"""
-Steps to Locate Your Firefox Profile Folder:
-1. Open Firefox.
-2. In the address bar, type: about:profiles and press Enter.
-3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
-4. Under that profile, find the "Root Directory" path.
-"""
 
 
 def parse_args() -> argparse.Namespace:
@@ -161,97 +162,85 @@ print(f"Login successful! Logged in as: {logged_in_username}")
 # Results in index 0 are the results we want to compare against at the end,
 # since they are the original results for the whole Wants List.
 results_overall_summaries: list[dict[str, int | float]] = []
-"""
-[
-  {
-    "wanted-articles": 99,
-    "shipments": 22,
-    "articles-value": 68.90,
-    "shipping-cost": 48.27,
-    "total": 118.17,
-  },
-  ...
-]
-"""
+# [
+#   {
+#     "wanted-articles": 99,
+#     "shipments": 22,
+#     "articles-value": 68.90,
+#     "shipping-cost": 48.27,
+#     "total": 118.17,
+#   },
+#   ...
+# ]
 results_summaries_per_seller: list[dict[str, dict[str, int | float]]] = []
-"""
-[
-  {
-    "seller_name_1": {
-      "wanted-articles": 13,
-      "articles-value": 22.19,
-      "shipping-cost": 2.10,
-      "total": 24.29,
-    },
-    ...
-  },
-  ...
-]
-"""
+# [
+#   {
+#     "seller_name_1": {
+#       "wanted-articles": 13,
+#       "articles-value": 22.19,
+#       "shipping-cost": 2.10,
+#       "total": 24.29,
+#     },
+#     ...
+#   },
+#   ...
+# ]
 results_details_per_seller: list[dict[str, list[dict[str, int | float | str | None]]]] = []
-"""
-[
-  {
-    "seller_name_1": [
-      {
-        "quantity": 1,
-        "card-name": "Monstrous Vortex",
-        "expansion": "Modern Horizons 3",
-        "language": "English",
-        "condition": "Near Mint",
-        "price": 0.07,
-      },
-      ...
-    ],
-    ...
-  },
-  ...
-]
-"""
+# [
+#   {
+#     "seller_name_1": [
+#       {
+#         "quantity": 1,
+#         "card-name": "Monstrous Vortex",
+#         "expansion": "Modern Horizons 3",
+#         "language": "English",
+#         "condition": "Near Mint",
+#         "price": 0.07,
+#       },
+#       ...
+#     ],
+#     ...
+#   },
+#   ...
+# ]
 
 # Final results after optimization.
 shopping_cart_overall_summary: dict[str, int | float] = {}
-"""
-{
-  "shipments": 22,
-  "wanted-articles": 99,
-  "articles-value": 68.90,
-  "shipping-cost": 48.27,
-  "trustee-service": 0.08,
-  "total": 118.17,
-}
-"""
+# {
+#   "shipments": 22,
+#   "wanted-articles": 99,
+#   "articles-value": 68.90,
+#   "shipping-cost": 48.27,
+#   "trustee-service": 0.08,
+#   "total": 118.17,
+# }
 shopping_cart_summaries_per_seller: dict[str, dict[str, int | float]] = {}
-"""
-{
-  "seller_name_1": {
-    "wanted-articles": 13,
-    "articles-value": 22.19,
-    "shipping-cost": 2.10,
-    "trustee-service": 0.03,
-    "total": 24.29,
-  },
-  ...
-}
-"""
+# {
+#   "seller_name_1": {
+#     "wanted-articles": 13,
+#     "articles-value": 22.19,
+#     "shipping-cost": 2.10,
+#     "trustee-service": 0.03,
+#     "total": 24.29,
+#   },
+#   ...
+# }
 shopping_cart_details_per_seller: dict[str, list[dict[str, int | float | str | None]]] = {}
-"""
-{
-  "seller_name_1": [
-    {
-      "quantity": 1,
-      "card-name": "Monstrous Vortex",
-      "expansion": "Modern Horizons 3",
-      "language": "English",
-      "condition": "Near Mint",
-      "extra": None,
-      "price": 0.07,
-    },
-    ...
-  ],
-  ...
-}
-"""
+# {
+#   "seller_name_1": [
+#     {
+#       "quantity": 1,
+#       "card-name": "Monstrous Vortex",
+#       "expansion": "Modern Horizons 3",
+#       "language": "English",
+#       "condition": "Near Mint",
+#       "extra": None,
+#       "price": 0.07,
+#     },
+#     ...
+#   ],
+#   ...
+# }
 cart_has_items = True
 iteration_num = 0
 while cart_has_items:
@@ -516,7 +505,7 @@ while cart_has_items:
     WebDriverWait(driver, 10).until(expected_conditions.presence_of_element_located((By.ID, "WantsListTable")))
 
     current_wants_list: dict[str, int] = {}
-    rows = []
+    rows: list[WebElement] = []
     while len(rows) == 0:
         time.sleep(0.5)
         rows = driver.find_element(By.ID, "WantsListTable").find_elements(By.CSS_SELECTOR, "table tbody tr[role='row']")

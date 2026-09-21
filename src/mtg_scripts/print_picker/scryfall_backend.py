@@ -4,20 +4,45 @@ import pickle
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, TypedDict, cast
 
 from .card_backend import IMAGE_LOADING_ENABLED, CardBackend, CardItem, CardRecord, ImagePair, ProgressCallback
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     import requests
+    from PIL import Image
 
-SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
-SCRYFALL_BULK_TYPES = ("oracle_cards", "default_cards")
-SCRYFALL_BULK_METADATA_MAX_AGE = 24 * 60 * 60
-SCRYFALL_INDEX_CACHE_VERSION = 2
-USER_AGENT = "mtg-print-picker/1.0 (contact: local)"
+SCRYFALL_BULK_DATA_URL: Final[str] = "https://api.scryfall.com/bulk-data"
+SCRYFALL_BULK_TYPES: Final[tuple[str, str]] = ("oracle_cards", "default_cards")
+SCRYFALL_BULK_METADATA_MAX_AGE: Final[int] = 24 * 60 * 60
+SCRYFALL_INDEX_CACHE_VERSION: Final[int] = 2
+USER_AGENT: Final[str] = "mtg-print-picker/1.0 (contact: local)"
+
+
+class _ScryfallBulkDataEntry(TypedDict, total=False):
+    """Fields used from a Scryfall `/bulk-data` entry."""
+
+    type: str
+    jsonl_download_uri: str
+    updated_at: str
+
+
+class _ScryfallBulkDataResponse(TypedDict, total=False):
+    """Shape of the Scryfall `/bulk-data` list response."""
+
+    data: list[_ScryfallBulkDataEntry]
+
+
+class CardIndex(TypedDict):
+    """Lookup tables built from the combined Scryfall bulk-data card index."""
+
+    by_name: dict[str, list[CardRecord]]
+    by_front_face_name: dict[str, list[CardRecord]]
+    by_flavor_name: dict[str, list[CardRecord]]
+    by_oracle_id: dict[str, list[CardRecord]]
 
 
 class ScryfallBackend(CardBackend):
@@ -28,7 +53,7 @@ class ScryfallBackend(CardBackend):
         self.bulk_dir = self.json_cache_dir.parent / "bulk"
         self.bulk_dir.mkdir(parents=True, exist_ok=True)
         self._bulk_lock = threading.Lock()
-        self._bulk_indexes = {}
+        self._bulk_indexes: dict[str, CardIndex] = {}
 
     @property
     def user_agent(self) -> str:
@@ -59,17 +84,17 @@ class ScryfallBackend(CardBackend):
         else:
             name, set_code, collector_number = card_text, None, None
 
-        hint = {}
+        hint: CardRecord = {}
         if set_code:
             hint["set"] = set_code
         if collector_number:
             hint["collector_number"] = collector_number
         if foil_marker:
             hint["is_foil"] = True
-        item = {"quantity": quantity, "name": name.strip()}
+        item: CardItem = {"quantity": quantity, "name": name.strip()}
         if hint:
             item["printing_hint"] = hint
-        return cast("CardItem", item)
+        return item
 
     @staticmethod
     def _normalize_card_name(name: str) -> str:
@@ -134,8 +159,8 @@ class ScryfallBackend(CardBackend):
         return True
 
     @staticmethod
-    def _collector_number_matches(actual_number: str, requested_number: object) -> bool:
-        requested_number = str(requested_number).casefold()
+    def _collector_number_matches(actual_number: str, requested_number: str) -> bool:
+        requested_number = requested_number.casefold()
         actual_number = actual_number.casefold()
         if actual_number == requested_number:
             return True
@@ -153,7 +178,7 @@ class ScryfallBackend(CardBackend):
         return self._card_index(_progress_callback)["by_oracle_id"].get(oracle_id, [])
 
     def lookup_cards(
-        self, items: list[CardItem], _progress_callback: ProgressCallback | None = None
+        self, items: Sequence[CardItem], _progress_callback: ProgressCallback | None = None
     ) -> list[tuple[CardRecord | None, Exception | None]]:
         self._card_index(_progress_callback)
         return [self._lookup_card_result(item) for item in items]
@@ -171,9 +196,7 @@ class ScryfallBackend(CardBackend):
         with self._bulk_lock:
             self._bulk_indexes.clear()
 
-    def _card_index(
-        self, progress_callback: ProgressCallback | None = None
-    ) -> dict[str, dict[str, list[CardRecord]]]:
+    def _card_index(self, progress_callback: ProgressCallback | None = None) -> CardIndex:
         with self._bulk_lock:
             if "cards" in self._bulk_indexes:
                 return self._bulk_indexes["cards"]
@@ -186,12 +209,12 @@ class ScryfallBackend(CardBackend):
                 try:
                     with index_path.open("rb") as index_file:
                         index = pickle.load(index_file)  # noqa: S301 - this is an application-owned cache
-                except (EOFError, OSError, pickle.PickleError, ValueError):
+                except EOFError, OSError, pickle.PickleError, ValueError:
                     index_path.unlink(missing_ok=True)
                 else:
                     self._bulk_indexes["cards"] = index
                     return index
-            bulk_paths = []
+            bulk_paths: list[Path] = []
             for bulk_type, download_uri in zip(SCRYFALL_BULK_TYPES, download_uris, strict=True):
                 bulk_version = self._cache_name(download_uri)[:16]
                 bulk_path = self.bulk_dir / f"{bulk_type}-{bulk_version}.jsonl.gz"
@@ -207,20 +230,21 @@ class ScryfallBackend(CardBackend):
             self._bulk_indexes["cards"] = index
             return index
 
-    def _load_bulk_metadata(self) -> dict[str, dict[str, object]]:
+    def _load_bulk_metadata(self) -> dict[str, _ScryfallBulkDataEntry]:
         metadata_path = self.bulk_dir / "metadata.json"
         metadata_is_current = metadata_path.exists() and (
             time.time() - metadata_path.stat().st_mtime < SCRYFALL_BULK_METADATA_MAX_AGE
         )
         if metadata_is_current:
             with metadata_path.open("r", encoding="utf-8") as metadata_file:
-                metadata = json.load(metadata_file)
+                metadata: dict[str, _ScryfallBulkDataEntry] = json.load(metadata_file)
             if all(bulk_type in metadata for bulk_type in SCRYFALL_BULK_TYPES):
                 return metadata
 
         response = self.session.get(SCRYFALL_BULK_DATA_URL, timeout=20)
         response.raise_for_status()
-        metadata = {entry["type"]: entry for entry in response.json().get("data", [])}
+        bulk_data_response = cast("_ScryfallBulkDataResponse", response.json())
+        metadata = {entry["type"]: entry for entry in bulk_data_response.get("data", [])}
         missing_types = [bulk_type for bulk_type in SCRYFALL_BULK_TYPES if bulk_type not in metadata]
         if missing_types:
             msg = f"Scryfall bulk data is missing: {', '.join(missing_types)}"
@@ -265,20 +289,18 @@ class ScryfallBackend(CardBackend):
         if progress_callback:
             progress_callback(message, current, total)
 
-    def _build_combined_index(
-        self, oracle_path: Path, default_path: Path
-    ) -> dict[str, dict[str, list[CardRecord]]]:
-        default_ids = set()
+    def _build_combined_index(self, oracle_path: Path, default_path: Path) -> CardIndex:
+        default_ids: set[str] = set()
         with gzip.open(oracle_path, "rt", encoding="utf-8") as oracle_file:
             for line in oracle_file:
-                card = json.loads(line)
+                card = cast("CardRecord", json.loads(line))
                 if card.get("id"):
                     default_ids.add(card["id"])
 
-        by_name = {}
-        by_front_face_name = {}
-        by_flavor_name = {}
-        by_oracle_id = {}
+        by_name: dict[str, list[CardRecord]] = {}
+        by_front_face_name: dict[str, list[CardRecord]] = {}
+        by_flavor_name: dict[str, list[CardRecord]] = {}
+        by_oracle_id: dict[str, list[CardRecord]] = {}
         with gzip.open(default_path, "rt", encoding="utf-8") as bulk_file:
             for line in bulk_file:
                 card = cast("CardRecord", json.loads(line))
@@ -308,24 +330,20 @@ class ScryfallBackend(CardBackend):
             "by_oracle_id": by_oracle_id,
         }
 
-    def _default_candidates(
-        self, index: dict[str, dict[str, list[CardRecord]]], name: str, *, include_flavor: bool = False
-    ) -> list[CardRecord]:
+    def _default_candidates(self, index: CardIndex, name: str, *, include_flavor: bool = False) -> list[CardRecord]:
         candidates = self._card_candidates(index, name, include_flavor=include_flavor)
         return [candidate for candidate in candidates if candidate.get("_is_default")]
 
-    def _card_candidates(
-        self, index: dict[str, dict[str, list[CardRecord]]], name: str, *, include_flavor: bool = True
-    ) -> list[CardRecord]:
+    def _card_candidates(self, index: CardIndex, name: str, *, include_flavor: bool = True) -> list[CardRecord]:
         normalized_name = self._normalize_card_name(name).casefold()
-        candidates = []
+        candidates: list[CardRecord] = []
         for candidate_group in (
             index["by_name"].get(normalized_name, []),
             index["by_front_face_name"].get(normalized_name, []),
             index["by_flavor_name"].get(normalized_name, []) if include_flavor else [],
         ):
             candidates.extend(candidate_group)
-        unique_candidates = {}
+        unique_candidates: dict[str | int, CardRecord] = {}
         for candidate in candidates:
             candidate_id = candidate.get("id") or id(candidate)
             unique_candidates[candidate_id] = candidate
@@ -368,8 +386,7 @@ class ScryfallBackend(CardBackend):
         return set_code, collector_number
 
     @staticmethod
-    def _format_collector_number(collector_number: object, *, foil_requested: bool | None = None) -> str:
-        collector_number = str(collector_number)
+    def _format_collector_number(collector_number: str, *, foil_requested: bool | None = None) -> str:
         foil_star = chr(0x2605)
         if (foil_requested is True or collector_number.endswith(("*", foil_star))) and not collector_number.endswith(
             "*F*"
@@ -399,7 +416,7 @@ class ScryfallBackend(CardBackend):
             return None, None
         if card.get("image_uris"):
             return super().load_card_images(card, high_quality=high_quality)
-        images = []
+        images: list[Image.Image | None] = []
         for face in (card.get("card_faces") or [])[:2]:
             url = self.image_url(face, high_quality=high_quality)
             images.append(self.get_image(url) if url else None)

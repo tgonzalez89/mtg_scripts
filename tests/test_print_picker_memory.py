@@ -6,7 +6,7 @@ import os
 import time
 import weakref
 from ctypes import wintypes
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -16,7 +16,8 @@ from mtg_scripts.print_picker.riftcodex_backend import RiftCodexBackend as RiftB
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from mtg_scripts.print_picker.card_backend import CardBackend
+    from mtg_scripts.print_picker.card_backend import CardBackend, CardItem
+    from mtg_scripts.print_picker.scryfall_backend import ScryfallBackend
 
 MAGIC_DECK = """1 Abandoned Air Temple
 1 Ambrosia Whiteheart
@@ -155,7 +156,7 @@ def _process_memory() -> int:
     return counters.WorkingSetSize
 
 
-def _snapshot(label: str) -> dict[str, int | str]:
+def _snapshot(label: str) -> dict[str, int | str | float]:
     gc.collect()
     snapshot = {
         "label": label,
@@ -170,9 +171,7 @@ def _wait_for_cards(app: App, expected_count: int, timeout: float = MEMORY_TEST_
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         app.update()
-        if len(app.card_grid.cards) == expected_count and all(
-            not item.get("image_loading") for item in app.items
-        ):
+        if len(app.card_grid.cards) == expected_count and all(not item.get("image_loading") for item in app.items):
             return
         time.sleep(0.01)
     pytest.fail(f"Timed out waiting for {expected_count} cards; got {len(app.card_grid.cards)}")
@@ -189,7 +188,13 @@ def _import_text(app: App, backend: CardBackend, text: str) -> None:
     _wait_for_cards(app, expected_count)
 
 
-def _open_and_close_chooser(app: App, item: dict[str, object]) -> dict[str, int | str]:
+def _has_single_printing(backend: ScryfallBackend, item: CardItem) -> bool:
+    card = item["card"]
+    assert card is not None
+    return len(backend.get_printings(card)) == 1
+
+
+def _open_and_close_chooser(app: App, item: CardItem) -> dict[str, int | float]:
     name = str(item["name"])
     app._open_chooser(item)
     chooser = app.printing_chooser
@@ -213,10 +218,10 @@ def _open_and_close_chooser(app: App, item: dict[str, object]) -> dict[str, int 
     assert chooser_ref() is None
     assert app.printing_chooser is None
     return {
-        "rss_before": before_close["rss_mb"],
-        "rss_after": after_close["rss_mb"],
-        "objects_before": before_close["tracked_objects"],
-        "objects_after": after_close["tracked_objects"],
+        "rss_before": cast("float", before_close["rss_mb"]),
+        "rss_after": cast("float", after_close["rss_mb"]),
+        "objects_before": cast("int", before_close["tracked_objects"]),
+        "objects_after": cast("int", after_close["tracked_objects"]),
     }
 
 
@@ -228,11 +233,10 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
         _snapshot("app_open")
         _import_text(app, app.backend, MAGIC_DECK)
         _snapshot("magic_import")
-        assert app.backend._bulk_indexes
+        scryfall_backend = cast("ScryfallBackend", app.backend)
+        assert scryfall_backend._bulk_indexes
 
-        single_item = next(
-            item for item in app.items if len(app.backend.get_printings(item["card"])) == 1
-        )
+        single_item = next(item for item in app.items if _has_single_printing(scryfall_backend, item))
         birds_item = next(item for item in app.items if item["name"] == "Birds of Paradise")
         forest_item = next(item for item in app.items if item["name"] == "Forest")
         _open_and_close_chooser(app, single_item)
@@ -242,7 +246,7 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
 
         _import_text(app, app.backend, "1 Sol Ring")
         _snapshot("sol_ring_import")
-        assert app.backend._bulk_indexes
+        assert cast("ScryfallBackend", app.backend)._bulk_indexes
 
         old_backend = app.backend
         old_backend.release_memory()

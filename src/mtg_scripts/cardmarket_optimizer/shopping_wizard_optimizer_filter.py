@@ -1,4 +1,14 @@
-filters = {
+from typing import Final, TypedDict
+
+
+class ShoppingWizardFilters(TypedDict):
+    sellerCountry: list[int | str]
+    sellerType: list[int]
+    sellerReputation: int
+    maxShippingTime: int
+
+
+filters: Final[ShoppingWizardFilters] = {
     "sellerCountry": [
         # 1,  # Austria,
         # 2,  # Belgium,

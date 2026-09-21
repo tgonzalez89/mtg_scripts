@@ -1,3 +1,11 @@
+"""Steps to Locate Your Firefox Profile Folder.
+
+1. Open Firefox.
+2. In the address bar, type: about:profiles and press Enter.
+3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
+4. Under that profile, find the "Root Directory" path.
+"""
+
 import argparse
 import json
 import re
@@ -5,7 +13,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from selenium import webdriver
 from selenium.webdriver.common.action_chains import ActionChains
@@ -18,14 +26,6 @@ if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
 
 # CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
-
-"""
-Steps to Locate Your Firefox Profile Folder:
-1. Open Firefox.
-2. In the address bar, type: about:profiles and press Enter.
-3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
-4. Under that profile, find the "Root Directory" path.
-"""
 
 
 def split_string_evenly(text: str, max_per_group: int = 100) -> list[list[str]]:
@@ -54,7 +54,9 @@ def split_string_evenly(text: str, max_per_group: int = 100) -> list[list[str]]:
     return groups
 
 
-ALLOWED_LANGS = sorted({"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"})
+ALLOWED_LANGS: Final[tuple[str, ...]] = tuple(
+    sorted({"Any", "en", "jp", "zh-CN", "zh-TW", "ft", "de", "it", "kr", "pt", "ru", "es"})
+)
 
 
 def parse_language_thresholds(arg_value: str) -> dict[str, int]:
@@ -78,7 +80,7 @@ def parse_language_thresholds(arg_value: str) -> dict[str, int]:
         msg = "Can't be empty."
         raise argparse.ArgumentTypeError(msg)
 
-    thresholds = {}
+    thresholds: dict[str, int] = {}
     for index, pair in enumerate(pairs):
         language, threshold = _parse_language_threshold_pair(pair, index)
         if language not in ALLOWED_LANGS:
@@ -465,7 +467,7 @@ def wait_for_optimizer() -> None:
 
 # --- Step 10: Get the prices ---
 def get_prices() -> dict[str, int]:
-    cards = {}
+    cards: dict[str, int] = {}
     # Find all card rows that have class 'deck-table-row' and attributes data-id and data-uuid
     card_rows = driver.find_elements(
         By.XPATH,
@@ -497,7 +499,7 @@ def get_prices() -> dict[str, int]:
 
 
 def get_prices2() -> dict[str, int]:
-    cards = {}
+    cards: dict[str, int] = {}
 
     rows = driver.find_elements(By.CSS_SELECTOR, ".deck-table-row[data-id][data-uuid]")
 
@@ -531,7 +533,7 @@ def get_prices2() -> dict[str, int]:
 
 # --- Step 11: Get the prices in all languages ---
 
-cards = {}
+cards: dict[str, dict[str, int]] = {}
 time.sleep(1)
 for idx, language in enumerate(args.language_price_thresholds):
     set_expansion(args.expansion_choice)
@@ -554,9 +556,9 @@ if len(args.language_price_thresholds) == 1:
 def choose_languages1(prices_by_lang: dict[str, dict[str, int]], config: dict[str, int]) -> dict[str, str]:
     # Calculate the price diff for the language and the currently selected language.
     # If the price diff is >= price diff threshold, choose that language.
-    chosen_languages = {}
+    chosen_languages: dict[str, str] = {}
 
-    all_cards = set()
+    all_cards: set[str] = set()
     for lang_prices in prices_by_lang.values():
         all_cards.update(lang_prices.keys())
 

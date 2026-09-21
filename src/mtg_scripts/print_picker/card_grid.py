@@ -1,11 +1,11 @@
 import tkinter as tk
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from tkinter import ttk
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .card import Card, CardInteraction
-from .full_image_window import FullImageWindow, ImageWindowOptions
+from .full_image_window import FullImageWindow, ImageAction, ImageWindowOptions
 from .scrollable_frame import ScrollableFrame
 from .scryfall_backend import ScryfallBackend
 
@@ -32,17 +32,18 @@ class CardGrid(ttk.Frame):
         self.on_choose = on_choose
         self.on_open_full_image = on_open_full_image
         self.chooser_mode = chooser_mode
-        self.cards = []
-        self.items = []
+        self.cards: list[Card] = []
+        self.items: list[CardItem] = []
         self.grid_zoom = 1.0
         self.executor = ThreadPoolExecutor(max_workers=8)
         self._load_generation = 0
         self._closed = False
         self._reflow_pending = False
         self._configured_columns = 0
-        self._global_bindings = []
-        self._tasks = set()
-        self._loaded_items = {}
+        self._global_bindings: list[tuple[str, str]] = []
+        self._tasks: set[Future[None]] = set()
+        self._loaded_items: dict[int, CardItem] = {}
+        self._image_loader: ItemLoader | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -94,7 +95,10 @@ class CardGrid(ttk.Frame):
         for task in self._tasks:
             task.cancel()
         self._tasks.clear()
-        root = self._root()
+        # `_root`/`_unbind` are private tkinter internals that are not part of the
+        # `tkinter.Misc` stub, so they are accessed via an `Any` cast rather than
+        # widened public typing.
+        root = cast("Any", self)._root()  # noqa: SLF001
         for sequence, funcid in self._global_bindings:
             root._unbind(("bind", "all", sequence), funcid)  # noqa: SLF001
         self._global_bindings.clear()
@@ -160,6 +164,8 @@ class CardGrid(ttk.Frame):
             return
         self._loaded_items[id(item)] = item
         if len(self._loaded_items) == len(self.items):
+            if TYPE_CHECKING:
+                assert self.backend is not None
             ordered_items = self.backend.sort_items(
                 list(self._loaded_items.values()), include_name=not self.chooser_mode
             )
@@ -234,18 +240,18 @@ class CardGrid(ttk.Frame):
     def _right_click(self, card: Card, _event: tk.Event[tk.Misc]) -> None:
         image_cards = [other for other in self.cards if other.item.get("image")]
         if card in image_cards:
-            images = [()] * len(image_cards)
-            action_callback = None
-            action_text = None
+            images: list[tuple[Image.Image, ...]] = [()] * len(image_cards)
+            action_callback: ImageAction | None = None
+            action_text: str | None = None
             on_choose = self.on_choose
             if on_choose:
                 if self.chooser_mode:
 
-                    def action_callback(index: int, _viewer: object) -> None:
+                    def action_callback(index: int, _viewer: FullImageWindow) -> None:
                         return on_choose(image_cards[index].item)
                 else:
 
-                    def action_callback(index: int, viewer: object) -> None:
+                    def action_callback(index: int, viewer: FullImageWindow) -> None:
                         return on_choose(image_cards[index].item, viewer)
 
                 action_text = "Choose"
@@ -262,11 +268,12 @@ class CardGrid(ttk.Frame):
                 FullImageWindow(self, images, options)
 
     def _load_full_images(self, item: CardItem, viewer: FullImageWindow) -> None:
-        source = cast("CardRecord", item.get("chosen_print") or item.get("default_card") or item.get("card") or item)
-
+        # `get_full_images` resolves the printing to use (chosen/default/card/item
+        # itself) internally, so the raw `item` is passed through rather than
+        # pre-resolving it here.
         def load() -> None:
             try:
-                images = self.get_full_images(source)
+                images = self.get_full_images(item)
                 viewer.after(0, viewer.update_current_images, images)
             except tk.TclError:
                 pass
@@ -274,6 +281,8 @@ class CardGrid(ttk.Frame):
         self._submit_task(load)
 
     def get_full_images(self, item: CardItem) -> tuple[Image.Image, ...]:
+        if TYPE_CHECKING:
+            assert self.backend is not None
         source = cast("CardRecord", item.get("chosen_print") or item.get("default_card") or item.get("card") or item)
         image_pair = self.backend.load_card_images(source, high_quality=True)
         images = tuple(image for image in image_pair if image is not None)
@@ -291,7 +300,12 @@ class CardGrid(ttk.Frame):
             if card.item is item:
                 card.refresh_from_item()
             elif card.item.get("_source_item") is item and "chosen_print" not in card.item:
-                card.item.update({key: item.get(key) for key in ("image", "images", "error", "image_loading")})
+                card.item.update(
+                    cast(
+                        "CardItem",
+                        {key: item.get(key) for key in ("image", "images", "error", "image_loading")},
+                    )
+                )
                 card.refresh_from_item()
         self._schedule_reflow()
 

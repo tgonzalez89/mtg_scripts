@@ -1,9 +1,17 @@
+"""Steps to Locate Your Firefox Profile Folder.
+
+1. Open Firefox.
+2. In the address bar, type: about:profiles and press Enter.
+3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
+4. Under that profile, find the "Root Directory" path.
+"""
+
 import argparse
 import json
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict, cast
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
@@ -20,17 +28,21 @@ if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
     from selenium.webdriver.remote.webelement import WebElement
 
-MIN_CARD_FIELDS = 2
+MIN_CARD_FIELDS: Final = 2
+
+
+class ScrapedOffer(TypedDict):
+    total_price: float
+    price: float
+    shipping_price: float
+    amount: int
+    seller: str
+    condition: str
+    language: str
+    url: NotRequired[str]
+
 
 # CLOSE FIREFOX BEFORE RUNNING THIS SCRIPT
-
-"""
-Steps to Locate Your Firefox Profile Folder:
-1. Open Firefox.
-2. In the address bar, type: about:profiles and press Enter.
-3. You'll see a list of profiles. Look for the one labeled "Default" or the one you actively use.
-4. Under that profile, find the "Root Directory" path.
-"""
 
 # TODO: Skip sellers that only provide tracked shipping (it's expensive)
 
@@ -109,9 +121,7 @@ def empty_cart(driver: WebDriver, *, ret: bool = True) -> bool | None:
     return None
 
 
-def get_row_data(
-    row: WebElement, sellers_database: dict[str, float]
-) -> tuple[dict[str, int | float | str] | None, bool]:
+def get_row_data(row: WebElement, sellers_database: dict[str, float]) -> tuple[ScrapedOffer | None, bool]:
     try:
         button = row.find_element(By.XPATH, ".//button[@aria-label='Put in shopping cart']")
     except NoSuchElementException:
@@ -195,7 +205,7 @@ with keep.presenting():
         with Path(args.sellers_database).open("r", encoding="utf-8") as sellers_file:
             sellers_database = json.load(sellers_file)
 
-    offers_database: dict[str, list[dict[str, int | float | str]]] = {}
+    offers_database: dict[str, list[ScrapedOffer]] = {}
     if Path(args.offers_database).is_file():
         with Path(args.offers_database).open("r", encoding="utf-8") as offers_file:
             offers_database = json.load(offers_file)
@@ -304,7 +314,7 @@ with keep.presenting():
             )
         )
 
-        card_urls = []
+        card_urls: list[str] = []
 
         for row in rows:
             try:
@@ -329,7 +339,7 @@ with keep.presenting():
         card_urls_with_filters: list[str] = []
         for raw_card_url in card_urls:
             card_url = raw_card_url
-            filter_strings = []
+            filter_strings: list[str] = []
             for name, value in filters.items():
                 filter_string = name + "="
                 if isinstance(value, list):
@@ -358,7 +368,7 @@ with keep.presenting():
             driver.get(url)
 
             # Get the details of all the offers
-            offers: set = set()
+            offers: set[frozenset[tuple[str, int | float | str]]] = set()
             i = 0
             refresh_rows = True
             disappeared_rows = 0
@@ -394,16 +404,16 @@ with keep.presenting():
                 if offer is None:
                     continue
                 offer["url"] = url.split("?", maxsplit=1)[0]
-                offer = frozenset(offer.items())
-                if offer not in offers:
-                    tmp_dict = dict(offer)
+                offer_key = frozenset(dict(offer).items())
+                if offer_key not in offers:
+                    tmp_dict = dict(offer_key)
                     tmp_dict.pop("url")
                     print(dict(sorted(tmp_dict.items())))
-                offers.add(offer)
+                offers.add(offer_key)
                 total_amount_offers += 1
 
             if len(offers) > 0:
-                offers_database[card_name].extend(dict(offer) for offer in offers)
+                offers_database[card_name].extend(cast("ScrapedOffer", dict(offer)) for offer in offers)
 
             # Stop if we reach the limit.
             if edition_idx + 1 >= args.max_editions or total_amount_offers >= args.max_total_offers:
@@ -411,7 +421,8 @@ with keep.presenting():
 
         # Uniquify offers.
         offers_database[card_name] = [
-            dict(offer) for offer in {frozenset(offer.items()) for offer in offers_database[card_name]}
+            cast("ScrapedOffer", dict(offer))
+            for offer in {frozenset(dict(offer).items()) for offer in offers_database[card_name]}
         ]
 
         with Path(args.offers_database).open("w", encoding="utf-8") as offers_file:
