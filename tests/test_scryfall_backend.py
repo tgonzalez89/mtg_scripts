@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -10,6 +11,8 @@ from mtg_scripts.print_picker.scryfall_backend import SCRYFALL_INDEX_CACHE_VERSI
 
 
 def _backend_with_cards(cards: list[dict[str, Any]]) -> ScryfallBackend:
+    for card in cards:
+        card["_is_default"] = True
     backend = ScryfallBackend.__new__(ScryfallBackend)
     index = {
         "by_name": {"llanowar elves": cards},
@@ -17,8 +20,7 @@ def _backend_with_cards(cards: list[dict[str, Any]]) -> ScryfallBackend:
         "by_flavor_name": {},
         "by_oracle_id": {},
     }
-    backend._default_index = lambda _progress_callback=None: index
-    backend._oracle_index = lambda _progress_callback=None: index
+    backend._card_index = lambda _progress_callback=None: index
     return backend
 
 
@@ -161,24 +163,47 @@ def test_set_only_foil_hint_uses_shared_finish_record() -> None:
 def test_bulk_index_is_reused_from_serialized_cache(tmp_path: Path) -> None:
     backend = ScryfallBackend(cache_dir=tmp_path)
     download_uri = "https://data.scryfall.io/oracle-cards/oracle-v1.jsonl.gz"
-    metadata = {"oracle_cards": {"jsonl_download_uri": download_uri}, "default_cards": {}}
+    default_uri = "https://data.scryfall.io/default-cards/default-v1.jsonl.gz"
+    metadata = {
+        "oracle_cards": {"jsonl_download_uri": download_uri},
+        "default_cards": {"jsonl_download_uri": default_uri},
+    }
     metadata_path = backend.bulk_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-    bulk_version = backend._cache_name(download_uri)[:16]
-    bulk_path = backend.bulk_dir / f"oracle_cards-{bulk_version}.jsonl.gz"
-    bulk_path.write_bytes(b"unused")
+    oracle_version = backend._cache_name(download_uri)[:16]
+    default_version = backend._cache_name(default_uri)[:16]
+    (backend.bulk_dir / f"oracle_cards-{oracle_version}.jsonl.gz").write_bytes(b"unused")
+    (backend.bulk_dir / f"default_cards-{default_version}.jsonl.gz").write_bytes(b"unused")
     expected_index = {
         "by_name": {"birds of paradise": [{"id": "cached"}]},
         "by_front_face_name": {},
         "by_flavor_name": {},
         "by_oracle_id": {},
     }
-    backend._build_bulk_index = lambda _bulk_type, _bulk_path: expected_index
+    backend._build_combined_index = lambda _oracle_path, _default_path: expected_index
 
-    assert backend._oracle_index() == expected_index
-    index_path = backend.bulk_dir / f"oracle_cards-{bulk_version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
+    assert backend._card_index() == expected_index
+    combined_version = backend._cache_name(f"{download_uri}\n{default_uri}")[:16]
+    index_path = backend.bulk_dir / f"cards-{combined_version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
     assert index_path.exists()
 
     cached_backend = ScryfallBackend(cache_dir=tmp_path)
-    cached_backend._build_bulk_index = lambda *_args: (_ for _ in ()).throw(AssertionError("index rebuilt"))
-    assert cached_backend._oracle_index() == expected_index
+    cached_backend._build_combined_index = lambda *_args: (_ for _ in ()).throw(AssertionError("index rebuilt"))
+    assert cached_backend._card_index() == expected_index
+
+
+def test_printing_cache_does_not_retain_ui_mutations() -> None:
+    backend = ScryfallBackend.__new__(ScryfallBackend)
+    backend._request_lock = threading.Lock()
+    backend._printing_cache = {}
+    backend._inflight_printings = {}
+    backend.get_printings = lambda _card, _progress_callback=None: [{"id": "printing"}]
+    card = {"id": "card"}
+
+    first_result = backend.lookup_printings(card)
+    first_result[0]["images"] = ("large image placeholder",)
+    first_result[0]["image"] = "large image placeholder"
+
+    second_result = backend.lookup_printings(card)
+    assert "images" not in second_result[0]
+    assert "image" not in second_result[0]

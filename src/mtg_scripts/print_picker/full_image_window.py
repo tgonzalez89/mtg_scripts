@@ -8,6 +8,7 @@ from PIL import Image, ImageTk
 
 type ImageAction = Callable[[int, "FullImageWindow"], None]
 type FaceAction = Callable[[int, int], None]
+type ImageLoader = Callable[[int, "FullImageWindow"], None]
 MIN_FACES = 2
 FOUR_BUTTON = 4
 
@@ -21,6 +22,7 @@ class ImageWindowOptions:
     action_callback: ImageAction | None = None
     action_text: str | None = None
     face_callback: FaceAction | None = None
+    image_loader: ImageLoader | None = None
 
 
 class FullImageWindow(tk.Toplevel):
@@ -36,10 +38,13 @@ class FullImageWindow(tk.Toplevel):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.images = [image if isinstance(image, (list, tuple)) else [image] for image in images]
+        self.images = [list(image) if isinstance(image, (list, tuple)) else [image] for image in images]
         self.index = options.index
         self.action_callback = options.action_callback
         self.face_callback = options.face_callback
+        self.image_loader = options.image_loader
+        self._loading_indices = set()
+        self._closed = False
         self.face_index = 0
         self.zoom = 1.0
         self.offset_x = 0
@@ -76,6 +81,17 @@ class FullImageWindow(tk.Toplevel):
         self.bind("<Right>", lambda _event: self._next())
         self._show_current()
 
+    def destroy(self) -> None:
+        self._closed = True
+        self.canvas.delete("all")
+        self._image_ref = None
+        self.images.clear()
+        self.action_callback = None
+        self.face_callback = None
+        self.image_loader = None
+        self._loading_indices.clear()
+        super().destroy()
+
     def _show_current(self) -> None:
         self.zoom = 1.0
         self.offset_x = 0
@@ -85,14 +101,23 @@ class FullImageWindow(tk.Toplevel):
         self.face_index = min(self.face_index, len(self.images[self.index]) - 1)
         if hasattr(self, "face_button"):
             self.face_button.configure(state="normal" if len(self.images[self.index]) > 1 else "disabled")
+        self._ensure_current_loaded()
         self._render()
+
+    def _ensure_current_loaded(self) -> None:
+        if self.image_loader and not self.images[self.index] and self.index not in self._loading_indices:
+            self._loading_indices.add(self.index)
+            self.image_loader(self.index, self)
 
     def _run_action(self) -> None:
         if self.action_callback is not None:
             self.action_callback(self.index, self)
 
     def update_current_images(self, images: Image.Image | Sequence[Image.Image]) -> None:
-        self.images[self.index] = images if isinstance(images, (list, tuple)) else [images]
+        if self._closed:
+            return
+        self.images[self.index] = list(images) if isinstance(images, (list, tuple)) else [images]
+        self._loading_indices.discard(self.index)
         self.face_index = 0
         if hasattr(self, "face_button"):
             self.face_button.configure(state="normal" if len(self.images[self.index]) > 1 else "disabled")
@@ -119,7 +144,19 @@ class FullImageWindow(tk.Toplevel):
     def _render(self) -> None:
         if not self.images:
             return
+        if not self.images[self.index]:
+            self.canvas.delete("IMG")
+            self.canvas.delete("STATUS")
+            self.canvas.create_text(
+                self.canvas.winfo_width() // 2,
+                self.canvas.winfo_height() // 2,
+                text="Loading image...",
+                fill="white",
+                tags="STATUS",
+            )
+            return
         image = cast("Image.Image", self.images[self.index][self.face_index])
+        self.canvas.delete("STATUS")
         width = max(1, int(image.width * self.zoom))
         height = max(1, int(image.height * self.zoom))
         resized = image.resize((width, height), Image.Resampling.LANCZOS)

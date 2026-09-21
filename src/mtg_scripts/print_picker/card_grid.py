@@ -23,12 +23,14 @@ class CardGrid(ttk.Frame):
         parent: tk.Misc,
         backend: CardBackend | None = None,
         on_choose: Callable[..., None] | None = None,
+        on_open_full_image: Callable[..., None] | None = None,
         *,
         chooser_mode: bool = False,
     ) -> None:
         super().__init__(parent)
         self.backend = backend or ScryfallBackend()
         self.on_choose = on_choose
+        self.on_open_full_image = on_open_full_image
         self.chooser_mode = chooser_mode
         self.cards = []
         self.items = []
@@ -36,6 +38,10 @@ class CardGrid(ttk.Frame):
         self.executor = ThreadPoolExecutor(max_workers=8)
         self._load_generation = 0
         self._closed = False
+        self._reflow_pending = False
+        self._configured_columns = 0
+        self._global_bindings = []
+        self._tasks = set()
         self._loaded_items = {}
         self._build_ui()
 
@@ -58,21 +64,48 @@ class CardGrid(ttk.Frame):
             ("<Control-minus>", lambda event: self._zoom_key(event, -1)),
             ("<Control-0>", lambda event: self._zoom_key(event, 0)),
         ):
-            self.bind_all(sequence, callback, add="+")
-        self.bind_all("<Control-KP_Add>", lambda event: self._zoom_key(event, 1), add="+")
-        self.bind_all("<Control-KP_Subtract>", lambda event: self._zoom_key(event, -1), add="+")
-        self.bind_all("<Control-KP_0>", lambda event: self._zoom_key(event, 0), add="+")
+            self._bind_all(sequence, callback)
+        self._bind_all("<Control-KP_Add>", lambda event: self._zoom_key(event, 1))
+        self._bind_all("<Control-KP_Subtract>", lambda event: self._zoom_key(event, -1))
+        self._bind_all("<Control-KP_0>", lambda event: self._zoom_key(event, 0))
+
+    def _bind_all(self, sequence: str, callback: Callable[..., object]) -> None:
+        funcid = self.bind_all(sequence, callback, add="+")
+        if funcid:
+            self._global_bindings.append((sequence, funcid))
 
     def clear(self) -> None:
         self._load_generation += 1
+        for task in self._tasks:
+            task.cancel()
+        self._tasks.clear()
+        for card in self.cards:
+            card.dispose()
         self.cards.clear()
-        for widget in self.scrollable.frame.winfo_children():
-            widget.destroy()
+        self.items.clear()
+        self._loaded_items.clear()
+        self._image_loader = None
+        self._configured_columns = 0
 
     def destroy(self) -> None:
         self._closed = True
         self._load_generation += 1
         self.executor.shutdown(wait=False, cancel_futures=True)
+        for task in self._tasks:
+            task.cancel()
+        self._tasks.clear()
+        root = self._root()
+        for sequence, funcid in self._global_bindings:
+            root._unbind(("bind", "all", sequence), funcid)  # noqa: SLF001
+        self._global_bindings.clear()
+        for card in self.cards:
+            card.dispose()
+        self.cards.clear()
+        self.items.clear()
+        self._loaded_items.clear()
+        self.backend = None
+        self.on_choose = None
+        self.on_open_full_image = None
         super().destroy()
 
     def set_backend(self, backend: CardBackend) -> None:
@@ -85,7 +118,7 @@ class CardGrid(ttk.Frame):
             quantity = item.get("quantity", 1)
             for copy_number in range(1, quantity + 1):
                 self._add_card(item, copy_number)
-        self._reflow()
+        self._schedule_reflow()
 
     def load_items(
         self,
@@ -100,18 +133,23 @@ class CardGrid(ttk.Frame):
         self._image_loader = image_loader
         generation = self._load_generation
         if batch_loader:
-            self.executor.submit(
+            self._submit_task(
                 batch_loader,
                 items,
                 lambda loaded, current=generation: self._on_item_loaded(loaded, current),
             )
         else:
             for item in items:
-                self.executor.submit(
+                self._submit_task(
                     loader,
                     item,
                     lambda loaded, current=generation: self._on_item_loaded(loaded, current),
                 )
+
+    def _submit_task(self, callback: Callable[..., None], *args: object) -> None:
+        task = self.executor.submit(callback, *args)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _on_item_loaded(self, item: CardItem, generation: int) -> None:
         if generation == self._load_generation and not self._closed:
@@ -126,19 +164,39 @@ class CardGrid(ttk.Frame):
                 list(self._loaded_items.values()), include_name=not self.chooser_mode
             )
             for loaded_item in ordered_items:
+                if self._image_loader:
+                    loaded_item["image_loading"] = True
                 self._add_loaded_item(loaded_item, generation)
-            self._reflow()
+            self._schedule_reflow()
             if self._image_loader:
-                for loaded_item in ordered_items:
-                    self.executor.submit(
-                        self._image_loader,
-                        loaded_item,
-                        lambda updated, current=generation: self._on_image_loaded(updated, current),
-                    )
+                self.update_idletasks()
+                self.after(0, self._start_image_loading, ordered_items, generation)
+
+    def _start_image_loading(self, items: list[CardItem], generation: int) -> None:
+        if generation != self._load_generation or self._closed or self._image_loader is None:
+            return
+        for item in items:
+            self._submit_task(
+                self._run_image_loader,
+                item,
+                generation,
+                self._image_loader,
+            )
+
+    def _run_image_loader(self, item: CardItem, generation: int, loader: ItemLoader) -> None:
+        try:
+            loader(
+                item,
+                lambda updated, current=generation: self._on_image_loaded(updated, current),
+            )
+        except Exception as error:  # noqa: BLE001 - worker failures must finish the loading state
+            item["error"] = str(error)
+            self._on_image_loaded(item, generation)
 
     def _on_image_loaded(self, item: CardItem, generation: int) -> None:
         if generation != self._load_generation or self._closed:
             return
+        item["image_loading"] = False
         self.after(0, self._refresh_current_item, item, generation)
 
     def _refresh_current_item(self, item: CardItem, generation: int) -> None:
@@ -176,7 +234,7 @@ class CardGrid(ttk.Frame):
     def _right_click(self, card: Card, _event: tk.Event[tk.Misc]) -> None:
         image_cards = [other for other in self.cards if other.item.get("image")]
         if card in image_cards:
-            images = [self.get_full_images(other.item) for other in image_cards]
+            images = [()] * len(image_cards)
             action_callback = None
             action_text = None
             on_choose = self.on_choose
@@ -191,16 +249,29 @@ class CardGrid(ttk.Frame):
                         return on_choose(image_cards[index].item, viewer)
 
                 action_text = "Choose"
-            FullImageWindow(
-                self,
-                images,
-                ImageWindowOptions(
-                    index=image_cards.index(card),
-                    title=str(card.item.get("name", "Image")),
-                    action_callback=action_callback,
-                    action_text=action_text,
-                ),
+            options = ImageWindowOptions(
+                index=image_cards.index(card),
+                title=str(card.item.get("name", "Image")),
+                action_callback=action_callback,
+                action_text=action_text,
+                image_loader=lambda index, viewer: self._load_full_images(image_cards[index].item, viewer),
             )
+            if self.on_open_full_image:
+                self.on_open_full_image(self, images, options)
+            else:
+                FullImageWindow(self, images, options)
+
+    def _load_full_images(self, item: CardItem, viewer: FullImageWindow) -> None:
+        source = cast("CardRecord", item.get("chosen_print") or item.get("default_card") or item.get("card") or item)
+
+        def load() -> None:
+            try:
+                images = self.get_full_images(source)
+                viewer.after(0, viewer.update_current_images, images)
+            except tk.TclError:
+                pass
+
+        self._submit_task(load)
 
     def get_full_images(self, item: CardItem) -> tuple[Image.Image, ...]:
         source = cast("CardRecord", item.get("chosen_print") or item.get("default_card") or item.get("card") or item)
@@ -220,12 +291,27 @@ class CardGrid(ttk.Frame):
             if card.item is item:
                 card.refresh_from_item()
             elif card.item.get("_source_item") is item and "chosen_print" not in card.item:
-                card.item.update({key: item.get(key) for key in ("image", "images", "error")})
+                card.item.update({key: item.get(key) for key in ("image", "images", "error", "image_loading")})
                 card.refresh_from_item()
+        self._schedule_reflow()
+
+    def _schedule_reflow(self) -> None:
+        if self._closed or self._reflow_pending:
+            return
+        self._reflow_pending = True
+        self.after_idle(self._run_scheduled_reflow)
+
+    def _run_scheduled_reflow(self) -> None:
+        self._reflow_pending = False
+        if self._closed:
+            return
+        if not self.winfo_ismapped() or self.scrollable.canvas.winfo_width() <= 1:
+            self.after(25, self._schedule_reflow)
+            return
         self._reflow()
 
     def _on_resize(self, _event: tk.Event[tk.Misc] | None = None) -> None:
-        self.after_idle(self._reflow)
+        self._schedule_reflow()
 
     def _is_inside(self, widget: tk.Misc | None) -> bool:
         while widget:
@@ -295,8 +381,9 @@ class CardGrid(ttk.Frame):
         columns = max(1, available_width // card_width)
         for index, card in enumerate(self.cards):
             card.grid(row=index // columns, column=index % columns, padx=5, pady=5, sticky="nsew")
-        for column in range(len(self.cards)):
+        for column in range(max(self._configured_columns, columns)):
             self.scrollable.frame.columnconfigure(column, weight=0, minsize=0)
         for column in range(columns):
             self.scrollable.frame.columnconfigure(column, weight=1, minsize=card_width)
+        self._configured_columns = columns
         self.scrollable.canvas.configure(scrollregion=self.scrollable.canvas.bbox("all"))

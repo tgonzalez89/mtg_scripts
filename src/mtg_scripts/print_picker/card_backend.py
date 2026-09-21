@@ -14,6 +14,7 @@ import requests
 from PIL import Image
 
 MAX_EXTENSION_LENGTH = 5
+IMAGE_LOADING_ENABLED = True
 
 
 class CardRecord(TypedDict, total=False):
@@ -40,6 +41,7 @@ class CardRecord(TypedDict, total=False):
     image: Image.Image | None
     display_name: str
     error: str
+    image_loading: bool
     face_index: int
     _source_item: CardItem
     riftbound_id: str
@@ -57,6 +59,7 @@ class CardItem(CardRecord, total=False):
     images: tuple[Image.Image | None, ...]
     image: Image.Image | None
     error: str
+    image_loading: bool
     display_name: str
 
 
@@ -196,6 +199,8 @@ class CardBackend(ABC):
         return image
 
     def load_card_images(self, card: CardRecord, *, high_quality: bool = False) -> ImagePair:
+        if not IMAGE_LOADING_ENABLED:
+            return None, None
         url = self.image_url(card, high_quality=high_quality)
         image = self.get_image(url) if url else None
         return image, None
@@ -233,7 +238,7 @@ class CardBackend(ABC):
         key = self._printing_cache_key(card)
         with self._request_lock:
             if key in self._printing_cache:
-                return self._printing_cache[key]
+                return self._copy_printings(self._printing_cache[key])
             future = self._inflight_printings.get(key)
             if future is None:
                 future = Future()
@@ -242,7 +247,7 @@ class CardBackend(ABC):
             else:
                 owner = False
         if not owner:
-            return future.result()
+            return self._copy_printings(future.result())
 
         try:
             printings = self.get_printings(card, progress_callback)
@@ -253,10 +258,14 @@ class CardBackend(ABC):
             raise
         else:
             future.set_result(printings)
-            return printings
+            return self._copy_printings(printings)
         finally:
             with self._request_lock:
                 self._inflight_printings.pop(key, None)
+
+    @staticmethod
+    def _copy_printings(printings: list[CardRecord]) -> list[CardRecord]:
+        return [printing.copy() for printing in printings]
 
     @staticmethod
     def _printing_cache_key(card: CardRecord) -> tuple[object, ...]:
@@ -279,6 +288,12 @@ class CardBackend(ABC):
     def clear_json_cache(self) -> None:
         for cache_file in self.json_cache_dir.glob("*.json"):
             cache_file.unlink()
+        self.release_memory()
+
+    def release_memory(self) -> None:
+        self.release_lookup_memory()
+
+    def release_lookup_memory(self) -> None:
         with self._request_lock:
             self._card_cache.clear()
             self._printing_cache.clear()

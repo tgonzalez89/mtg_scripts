@@ -6,7 +6,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, cast
 
-from .card_backend import CardBackend, CardItem, CardRecord, ImagePair, ProgressCallback
+from .card_backend import IMAGE_LOADING_ENABLED, CardBackend, CardItem, CardRecord, ImagePair, ProgressCallback
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
 SCRYFALL_BULK_TYPES = ("oracle_cards", "default_cards")
 SCRYFALL_BULK_METADATA_MAX_AGE = 24 * 60 * 60
-SCRYFALL_INDEX_CACHE_VERSION = 1
+SCRYFALL_INDEX_CACHE_VERSION = 2
 USER_AGENT = "mtg-print-picker/1.0 (contact: local)"
 
 
@@ -83,7 +83,7 @@ class ScryfallBackend(CardBackend):
         normalized_name = self._canonical_card_name(name)
         if not printing_hint:
             return self._search_unhinted_card(normalized_name)
-        candidates = self._card_candidates(self._default_index(), normalized_name)
+        candidates = self._card_candidates(self._card_index(), normalized_name)
         identity_matches = [card for card in candidates if self._matches_printing_identity(card, printing_hint)]
         if not identity_matches:
             return None
@@ -97,15 +97,11 @@ class ScryfallBackend(CardBackend):
         return self._select_card(nonfoil_matches or identity_matches)
 
     def _search_unhinted_card(self, normalized_name: str) -> CardRecord | None:
-        oracle_index = self._oracle_index()
-        candidates = self._card_candidates(oracle_index, normalized_name)
+        index = self._card_index()
+        candidates = self._default_candidates(index, normalized_name)
         if candidates:
             return self._select_card(candidates)
-        default_index = self._default_index()
-        flavor_candidates = default_index["by_flavor_name"].get(normalized_name.casefold(), [])
-        if flavor_candidates:
-            return self._select_card(flavor_candidates)
-        candidates = self._card_candidates(default_index, normalized_name)
+        candidates = self._default_candidates(index, normalized_name, include_flavor=True)
         alias_card = self._select_card(candidates)
         if not alias_card:
             return None
@@ -113,7 +109,7 @@ class ScryfallBackend(CardBackend):
             (face.get("oracle_id") for face in alias_card.get("card_faces") or [] if face.get("oracle_id")),
             None,
         )
-        oracle_cards = oracle_index["by_oracle_id"].get(str(oracle_id), [alias_card])
+        oracle_cards = index["by_oracle_id"].get(str(oracle_id), [alias_card])
         return self._select_card(oracle_cards)
 
     @staticmethod
@@ -154,15 +150,12 @@ class ScryfallBackend(CardBackend):
             )
         if not oracle_id:
             return []
-        return self._default_index(_progress_callback)["by_oracle_id"].get(oracle_id, [])
+        return self._card_index(_progress_callback)["by_oracle_id"].get(oracle_id, [])
 
     def lookup_cards(
         self, items: list[CardItem], _progress_callback: ProgressCallback | None = None
     ) -> list[tuple[CardRecord | None, Exception | None]]:
-        if any(item.get("printing_hint") for item in items):
-            self._default_index(_progress_callback)
-        else:
-            self._oracle_index(_progress_callback)
+        self._card_index(_progress_callback)
         return [self._lookup_card_result(item) for item in items]
 
     def clear_json_cache(self) -> None:
@@ -173,28 +166,22 @@ class ScryfallBackend(CardBackend):
                 if bulk_file.is_file():
                     bulk_file.unlink()
 
-    def _oracle_index(
-        self, progress_callback: ProgressCallback | None = None
-    ) -> dict[str, dict[str, list[CardRecord]]]:
-        return self._load_bulk_index("oracle_cards", progress_callback)
+    def release_memory(self) -> None:
+        super().release_memory()
+        with self._bulk_lock:
+            self._bulk_indexes.clear()
 
-    def _default_index(
+    def _card_index(
         self, progress_callback: ProgressCallback | None = None
-    ) -> dict[str, dict[str, list[CardRecord]]]:
-        return self._load_bulk_index("default_cards", progress_callback)
-
-    def _load_bulk_index(
-        self, bulk_type: str, progress_callback: ProgressCallback | None = None
     ) -> dict[str, dict[str, list[CardRecord]]]:
         with self._bulk_lock:
-            if bulk_type in self._bulk_indexes:
-                return self._bulk_indexes[bulk_type]
+            if "cards" in self._bulk_indexes:
+                return self._bulk_indexes["cards"]
 
-            metadata = self._load_bulk_metadata()[bulk_type]
-            download_uri = str(metadata["jsonl_download_uri"])
-            version = self._cache_name(download_uri)[:16]
-            bulk_path = self.bulk_dir / f"{bulk_type}-{version}.jsonl.gz"
-            index_path = self.bulk_dir / f"{bulk_type}-{version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
+            metadata = self._load_bulk_metadata()
+            download_uris = [str(metadata[bulk_type]["jsonl_download_uri"]) for bulk_type in SCRYFALL_BULK_TYPES]
+            version = self._cache_name("\n".join(download_uris))[:16]
+            index_path = self.bulk_dir / f"cards-{version}-v{SCRYFALL_INDEX_CACHE_VERSION}.pickle"
             if index_path.exists():
                 try:
                     with index_path.open("rb") as index_file:
@@ -202,17 +189,22 @@ class ScryfallBackend(CardBackend):
                 except (EOFError, OSError, pickle.PickleError, ValueError):
                     index_path.unlink(missing_ok=True)
                 else:
-                    self._bulk_indexes[bulk_type] = index
+                    self._bulk_indexes["cards"] = index
                     return index
-            if not bulk_path.exists():
-                self._download_bulk_file(download_uri, bulk_path, progress_callback)
-            self._report_progress(progress_callback, f"Building {bulk_type} index...", 0, 0)
-            index = self._build_bulk_index(bulk_type, bulk_path)
+            bulk_paths = []
+            for bulk_type, download_uri in zip(SCRYFALL_BULK_TYPES, download_uris, strict=True):
+                bulk_version = self._cache_name(download_uri)[:16]
+                bulk_path = self.bulk_dir / f"{bulk_type}-{bulk_version}.jsonl.gz"
+                if not bulk_path.exists():
+                    self._download_bulk_file(download_uri, bulk_path, progress_callback)
+                bulk_paths.append(bulk_path)
+            self._report_progress(progress_callback, "Building combined card index...", 0, 0)
+            index = self._build_combined_index(bulk_paths[0], bulk_paths[1])
             temporary_index_path = index_path.with_suffix(index_path.suffix + ".tmp")
             with temporary_index_path.open("wb") as index_file:
                 pickle.dump(index, index_file, protocol=pickle.HIGHEST_PROTOCOL)
             temporary_index_path.replace(index_path)
-            self._bulk_indexes[bulk_type] = index
+            self._bulk_indexes["cards"] = index
             return index
 
     def _load_bulk_metadata(self) -> dict[str, dict[str, object]]:
@@ -273,14 +265,26 @@ class ScryfallBackend(CardBackend):
         if progress_callback:
             progress_callback(message, current, total)
 
-    def _build_bulk_index(self, _bulk_type: str, bulk_path: Path) -> dict[str, dict[str, list[CardRecord]]]:
+    def _build_combined_index(
+        self, oracle_path: Path, default_path: Path
+    ) -> dict[str, dict[str, list[CardRecord]]]:
+        default_ids = set()
+        with gzip.open(oracle_path, "rt", encoding="utf-8") as oracle_file:
+            for line in oracle_file:
+                card = json.loads(line)
+                if card.get("id"):
+                    default_ids.add(card["id"])
+
         by_name = {}
         by_front_face_name = {}
         by_flavor_name = {}
         by_oracle_id = {}
-        with gzip.open(bulk_path, "rt", encoding="utf-8") as bulk_file:
+        with gzip.open(default_path, "rt", encoding="utf-8") as bulk_file:
             for line in bulk_file:
                 card = cast("CardRecord", json.loads(line))
+                is_default = card.get("id") in default_ids
+                if is_default:
+                    card["_is_default"] = True
                 normalized_name = self._normalize_card_name(self.card_name(card)).casefold()
                 by_name.setdefault(normalized_name, []).append(card)
                 first_face = (card.get("card_faces") or [{}])[0]
@@ -304,13 +308,21 @@ class ScryfallBackend(CardBackend):
             "by_oracle_id": by_oracle_id,
         }
 
-    def _card_candidates(self, index: dict[str, dict[str, list[CardRecord]]], name: str) -> list[CardRecord]:
+    def _default_candidates(
+        self, index: dict[str, dict[str, list[CardRecord]]], name: str, *, include_flavor: bool = False
+    ) -> list[CardRecord]:
+        candidates = self._card_candidates(index, name, include_flavor=include_flavor)
+        return [candidate for candidate in candidates if candidate.get("_is_default")]
+
+    def _card_candidates(
+        self, index: dict[str, dict[str, list[CardRecord]]], name: str, *, include_flavor: bool = True
+    ) -> list[CardRecord]:
         normalized_name = self._normalize_card_name(name).casefold()
         candidates = []
         for candidate_group in (
             index["by_name"].get(normalized_name, []),
             index["by_front_face_name"].get(normalized_name, []),
-            index["by_flavor_name"].get(normalized_name, []),
+            index["by_flavor_name"].get(normalized_name, []) if include_flavor else [],
         ):
             candidates.extend(candidate_group)
         unique_candidates = {}
@@ -383,6 +395,8 @@ class ScryfallBackend(CardBackend):
         return None
 
     def load_card_images(self, card: CardRecord, *, high_quality: bool = False) -> ImagePair:
+        if not IMAGE_LOADING_ENABLED:
+            return None, None
         if card.get("image_uris"):
             return super().load_card_images(card, high_quality=high_quality)
         images = []

@@ -95,7 +95,8 @@ class Card(ttk.Frame):
                 self._render_cache[size] = self._image_ref
             self.image_label.configure(image=self._image_ref, text="")
         else:
-            self.image_label.configure(image="", text=self.item.get("error", "No image"))
+            status = "Image Loading..." if self.item.get("image_loading") else self.item.get("error", "No Image")
+            self.image_label.configure(image="", text=status)
         self.configure(width=max(1, int(230 * zoom)), height=max(1, int(360 * zoom)))
         self.pack_propagate(flag=False)
 
@@ -114,6 +115,15 @@ class Card(ttk.Frame):
         self._render_cache.clear()
         self.set_zoom(self.zoom)
         self._update_face_button()
+
+    def dispose(self) -> None:
+        self._render_cache.clear()
+        self._image_ref = None
+        self._image = None
+        self.item["images"] = ()
+        self.item["image"] = None
+        self.item["image_loading"] = False
+        self.destroy()
 
     def _update_face_button(self) -> None:
         if len(self.item.get("images") or []) > 1:
