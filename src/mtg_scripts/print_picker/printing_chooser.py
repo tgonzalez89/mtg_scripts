@@ -3,40 +3,43 @@ from __future__ import annotations
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import messagebox
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .card_grid import CardGrid
 from .gui_dialogs import ProgressDialog
+from .ui_queue import UiQueue
+from .view_model import CardSlot, printing_slot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from PIL import Image
-
-    from .card_backend import CardBackend, CardItem, CardRecord, ImagePair
+    from .card_backend import CardBackend
+    from .models import CardPrint
 
 
 class PrintingChooser(tk.Toplevel):
     def __init__(  # noqa: PLR0913, PLR0917
         self,
         master: tk.Misc,
-        card_item: CardItem,
+        slot: CardSlot,
         backend: CardBackend,
-        on_choose: Callable[[CardItem], None],
+        on_choose: Callable[[CardSlot], None],
         on_open_full_image: Callable[..., None] | None = None,
         on_close: Callable[[PrintingChooser], None] | None = None,
     ) -> None:
         super().__init__(master)
-        self.title(f"Choose printing for {card_item['name']}")
+        self.title(f"Choose printing for {slot.name}")
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.card_item = card_item
-        self.backend = backend
-        self.on_choose = on_choose
+        self.slot = slot
+        self.backend: CardBackend | None = backend
+        self.on_choose: Callable[[CardSlot], None] | None = on_choose
         self.on_open_full_image = on_open_full_image
         self.on_close = on_close
         self._closed = False
+        self._ui = UiQueue(self)
+        self._ui.start()
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.progress_dialog = ProgressDialog(self, "Loading card data") if backend.supports_progress else None
         self.card_grid = CardGrid(
@@ -53,11 +56,11 @@ class PrintingChooser(tk.Toplevel):
         if self._closed:
             return
         self._closed = True
+        self._ui.stop()
         on_close = self.on_close
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.card_grid.destroy()
         self.progress_dialog = None
-        self.card_item = cast("CardItem", {})
         self.backend = None
         self.on_choose = None
         self.on_open_full_image = None
@@ -67,24 +70,24 @@ class PrintingChooser(tk.Toplevel):
             on_close(self)
 
     def _load_printings(self) -> None:
-        card = self.card_item.get("card")
-        if not card:
-            self._post(self.card_grid.set_items, [])
+        backend = self.backend
+        card = self.slot.display_print
+        if backend is None or card is None:
+            self._post(self.card_grid.set_slots, [])
             self._post(self._close_progress)
             return
-        if TYPE_CHECKING:
-            assert self.backend is not None
         try:
-            printings = self.backend.lookup_printings(card, self._report_progress)
-            self._post(self._set_printings, printings)
+            printings = backend.printings_of(card, self._report_progress)
+            self._post(self._show_printings, printings)
         except (OSError, RuntimeError, ValueError) as error:
             self._post(self._show_error, error)
         finally:
             self._post(self._close_progress)
 
     def _post(self, callback: Callable[..., None], *args: object) -> None:
+        """Run `callback` on the UI thread; safe to call from a worker."""
         if not self._closed:
-            self.after(0, callback, *args)
+            self._ui.post(callback, *args)
 
     def _report_progress(self, message: str, current: int, total: int) -> None:
         self._post(self._update_progress, message, current, total)
@@ -98,41 +101,33 @@ class PrintingChooser(tk.Toplevel):
             self.progress_dialog.destroy()
             self.progress_dialog = None
 
-    def _set_printings(self, printings: list[CardRecord]) -> None:
-        if TYPE_CHECKING:
-            assert self.backend is not None
-        items: list[CardItem] = []
-        for printing in printings:
-            printing["name"] = self.backend.card_name(printing) or self.card_item["name"]
-            printing["display_name"] = self.backend.printing_display_name(printing)
-            items.append(cast("CardItem", printing))
-        self.card_grid.load_items(items, self._load_printing_metadata, self._load_printing_image)
-        self.backend.release_lookup_memory()
+    def _show_printings(self, printings: list[CardPrint]) -> None:
+        slots = [printing_slot(printing, self.slot.name) for printing in printings]
+        self.card_grid.load_slots(slots, _already_resolved, self._load_printing_image)
 
-    def _load_printing_metadata(self, printing: CardRecord, callback: Callable[[CardRecord], None]) -> None:
-        callback(printing)
-
-    def _load_printing_image(self, printing: CardRecord, callback: Callable[[CardRecord], None]) -> None:
-        if TYPE_CHECKING:
-            assert self.backend is not None
+    def _load_printing_image(self, slot: CardSlot, size: tuple[int, int]) -> None:
+        backend = self.backend
+        card = slot.display_print
+        if backend is None or card is None:
+            return
         try:
-            images = self._available_images(self.backend.load_card_images(printing))
-            printing["images"] = images
-            printing["image"] = images[0] if images else None
+            slot.images = backend.load_thumbnails(card, size)
         except (OSError, ValueError) as error:
-            printing["error"] = str(error)
-        callback(printing)
-
-    @staticmethod
-    def _available_images(image_pair: ImagePair) -> tuple[Image.Image, ...]:
-        return tuple(image for image in image_pair if image is not None)
+            slot.error = str(error)
 
     def _show_error(self, error: Exception) -> None:
         messagebox.showerror("Printings", str(error), parent=self)
 
-    def _choose(self, printing: CardRecord) -> None:
-        if TYPE_CHECKING:
-            assert self.on_choose is not None
-        self.card_item["chosen_print"] = printing
-        self.on_choose(self.card_item)
+    def _choose(self, slot: CardSlot) -> None:
+        if self.on_choose is None:
+            return
+        self.slot.chosen = slot.display_print
+        # The chosen printing's art differs from the one already loaded, so drop
+        # the stale thumbnails and let the grid reload them.
+        self.slot.release_images()
+        self.on_choose(self.slot)
         self.destroy()
+
+
+def _already_resolved(_slots: list[CardSlot]) -> None:
+    """Accept printings that already arrived fully resolved."""

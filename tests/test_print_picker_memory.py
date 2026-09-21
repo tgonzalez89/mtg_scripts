@@ -12,11 +12,12 @@ import pytest
 
 from mtg_scripts.print_picker.print_picker import App
 from mtg_scripts.print_picker.riftcodex_backend import RiftCodexBackend as RiftBoundBackend
+from mtg_scripts.print_picker.view_model import CardSlot
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from mtg_scripts.print_picker.card_backend import CardBackend, CardItem
+    from mtg_scripts.print_picker.card_backend import CardBackend
     from mtg_scripts.print_picker.scryfall_backend import ScryfallBackend
 
 MAGIC_DECK = """1 Abandoned Air Temple
@@ -171,7 +172,7 @@ def _wait_for_cards(app: App, expected_count: int, timeout: float = MEMORY_TEST_
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         app.update()
-        if len(app.card_grid.cards) == expected_count and all(not item.get("image_loading") for item in app.items):
+        if len(app.card_grid.cards) == expected_count and all(not slot.image_loading for slot in app.slots):
             return
         time.sleep(0.01)
     pytest.fail(f"Timed out waiting for {expected_count} cards; got {len(app.card_grid.cards)}")
@@ -180,31 +181,28 @@ def _wait_for_cards(app: App, expected_count: int, timeout: float = MEMORY_TEST_
 def _import_text(app: App, backend: CardBackend, text: str) -> None:
     app.backend = backend
     app.card_grid.set_backend(backend)
-    app.items = [backend.parse_card_line(line) for line in text.splitlines() if line.strip()]
+    app.slots = [CardSlot(entry=backend.parse_line(line)) for line in text.splitlines() if line.strip()]
     app.card_grid.clear()
-    backend.release_lookup_memory()
-    app.card_grid.load_items(app.items, app._load_card, app._load_card_images, app._load_cards)
-    expected_count = sum(item.get("quantity", 1) for item in app.items)
+    app.card_grid.load_slots(app.slots, app._resolve_slots, app._load_slot_images)
+    expected_count = sum(slot.quantity for slot in app.slots)
     _wait_for_cards(app, expected_count)
 
 
-def _has_single_printing(backend: ScryfallBackend, item: CardItem) -> bool:
-    card = item["card"]
+def _has_single_printing(backend: ScryfallBackend, slot: CardSlot) -> bool:
+    card = slot.display_print
     assert card is not None
-    return len(backend.get_printings(card)) == 1
+    return len(backend.printings_of(card)) == 1
 
 
-def _open_and_close_chooser(app: App, item: CardItem) -> dict[str, int | float]:
-    name = str(item["name"])
-    app._open_chooser(item)
+def _open_and_close_chooser(app: App, slot: CardSlot) -> dict[str, int | float]:
+    name = slot.name
+    app._open_chooser(slot)
     chooser = app.printing_chooser
     assert chooser is not None
     deadline = time.monotonic() + MEMORY_TEST_TIMEOUT
     while time.monotonic() < deadline:
         app.update()
-        if len(chooser.card_grid.cards) > 0 and all(
-            not card.item.get("image_loading") for card in chooser.card_grid.cards
-        ):
+        if len(chooser.card_grid.cards) > 0 and all(not card.slot.image_loading for card in chooser.card_grid.cards):
             break
         time.sleep(0.01)
     else:
@@ -213,6 +211,9 @@ def _open_and_close_chooser(app: App, item: CardItem) -> dict[str, int | float]:
     chooser_ref = weakref.ref(chooser)
     app._close_printing_chooser()
     app.update()
+    # Drop this frame's own reference, otherwise the chooser is trivially
+    # reachable and the leak check below can never fail.
+    del chooser
     gc.collect()
     after_close = _snapshot(f"chooser_closed:{name}")
     assert chooser_ref() is None
@@ -234,23 +235,24 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
         _import_text(app, app.backend, MAGIC_DECK)
         _snapshot("magic_import")
         scryfall_backend = cast("ScryfallBackend", app.backend)
-        assert scryfall_backend._bulk_indexes
+        assert scryfall_backend._store is not None
 
-        single_item = next(item for item in app.items if _has_single_printing(scryfall_backend, item))
-        birds_item = next(item for item in app.items if item["name"] == "Birds of Paradise")
-        forest_item = next(item for item in app.items if item["name"] == "Forest")
-        _open_and_close_chooser(app, single_item)
-        _open_and_close_chooser(app, birds_item)
-        forest = _open_and_close_chooser(app, forest_item)
+        single_slot = next(slot for slot in app.slots if _has_single_printing(scryfall_backend, slot))
+        # Released here so it cannot keep the backend alive past the swap below.
+        del scryfall_backend
+        birds_slot = next(slot for slot in app.slots if slot.name == "Birds of Paradise")
+        forest_slot = next(slot for slot in app.slots if slot.name == "Forest")
+        _open_and_close_chooser(app, single_slot)
+        _open_and_close_chooser(app, birds_slot)
+        forest = _open_and_close_chooser(app, forest_slot)
         assert forest["objects_after"] <= forest["objects_before"] + 10_000
 
         _import_text(app, app.backend, "1 Sol Ring")
         _snapshot("sol_ring_import")
-        assert cast("ScryfallBackend", app.backend)._bulk_indexes
+        assert cast("ScryfallBackend", app.backend)._store is not None
 
         old_backend = app.backend
-        old_backend.release_memory()
-        old_backend.session.close()
+        old_backend.close()
         old_backend_ref = weakref.ref(old_backend)
         app.backend = RiftBoundBackend(cache_dir=tmp_path)
         app.card_grid.set_backend(app.backend)

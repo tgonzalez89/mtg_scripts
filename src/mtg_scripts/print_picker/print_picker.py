@@ -4,20 +4,23 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import TYPE_CHECKING
 
-from .card_grid import CardGrid
+from .card_grid import CardGrid, art_size_for
 from .full_image_window import FullImageWindow, ImageWindowOptions
 from .gui_dialogs import ExportChoiceDialog, GameSelectionDialog, ProgressDialog
 from .printing_chooser import PrintingChooser
 from .riftcodex_backend import RiftCodexBackend
 from .scrollable_zoomable_text_frame import ScrollableZoomableTextFrame
 from .scryfall_backend import ScryfallBackend
+from .ui_queue import UiQueue
+from .view_model import CardSlot
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
     from PIL import Image
 
-    from .card_backend import CardBackend, CardItem, CardRecord, ImagePair
+    from .card_backend import CardBackend
+    from .models import CardPrint
 
 
 class App(tk.Tk):
@@ -27,17 +30,19 @@ class App(tk.Tk):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.backend = ScryfallBackend()
+        self.backend: CardBackend = ScryfallBackend()
         self._backend_factories: dict[str, type[CardBackend]] = {
             "Magic: The Gathering": ScryfallBackend,
             "RiftBound": RiftCodexBackend,
         }
         self.current_game = "Magic: The Gathering"
         self.executor = ThreadPoolExecutor(max_workers=8)
-        self.items: list[CardItem] = []
-        self.progress_dialog = None
-        self.printing_chooser = None
-        self.full_image_window = None
+        self.slots: list[CardSlot] = []
+        self.progress_dialog: ProgressDialog | None = None
+        self.printing_chooser: PrintingChooser | None = None
+        self.full_image_window: FullImageWindow | None = None
+        self._ui = UiQueue(self)
+        self._ui.start()
         self._build_layout()
 
     def destroy(self) -> None:
@@ -45,10 +50,10 @@ class App(tk.Tk):
         self._close_printing_chooser()
         if self.card_grid.winfo_exists():
             self.card_grid.destroy()
+        self._ui.stop()
         self.executor.shutdown(wait=False, cancel_futures=True)
-        self.backend.release_memory()
-        self.backend.session.close()
-        self.items.clear()
+        self.backend.close()
+        self.slots.clear()
         super().destroy()
 
     def _build_layout(self) -> None:
@@ -85,14 +90,14 @@ class App(tk.Tk):
         ttk.Button(self.button_frame, text="Export list", command=self._on_export_list).pack(fill="x", pady=5)
         ttk.Button(self.button_frame, text="Download images", command=self._on_download_images).pack(fill="x", pady=5)
 
+    # -- import -------------------------------------------------------------
+
     def _on_import(self) -> None:
         game = self._choose_game()
         if game is None:
             return
         if game != self.current_game:
-            old_backend = self.backend
-            old_backend.release_memory()
-            old_backend.session.close()
+            self.backend.close()
             self.backend = self._backend_factories[game]()
             self.current_game = game
         self.card_grid.set_backend(self.backend)
@@ -101,47 +106,45 @@ class App(tk.Tk):
         if not raw_text:
             messagebox.showinfo("Import", "Enter at least one card name.")
             return
-        self.items = self._parse_input(raw_text)
+        self.slots = self._parse_input(raw_text)
         self.card_grid.clear()
-        self.backend.release_lookup_memory()
         if self.backend.supports_progress:
             self._start_progress("Loading card data")
-        self.card_grid.load_items(self.items, self._load_card, self._load_card_images, self._load_cards)
+        self.card_grid.load_slots(self.slots, self._resolve_slots, self._load_slot_images)
 
     def _choose_game(self) -> str | None:
         dialog = GameSelectionDialog(self, self._backend_factories.keys())
         self.wait_window(dialog)
         return dialog.result
 
-    def _load_card(self, item: CardItem, callback: Callable[[CardItem], None]) -> None:
-        try:
-            card = self.backend.lookup_card(item["name"], item.get("printing_hint"))
-        except (OSError, ValueError) as error:
-            item["error"] = str(error)
-        else:
-            self._set_card_result(item, card)
-        callback(item)
+    def _parse_input(self, raw_text: str) -> list[CardSlot]:
+        return [CardSlot(entry=self.backend.parse_line(line)) for line in raw_text.splitlines() if line.strip()]
 
-    def _load_cards(self, items: list[CardItem], callback: Callable[[CardItem], None]) -> None:
+    def _resolve_slots(self, slots: list[CardSlot]) -> None:
+        """Resolve every slot in one batch, on a worker thread."""
         try:
-            results = self.backend.lookup_cards(items, self._report_progress)
-        except (OSError, RuntimeError, ValueError) as error:
-            results = [(None, error)] * len(items)
+            resolutions = self.backend.resolve([slot.entry for slot in slots], self._report_progress)
         finally:
             self._finish_progress()
-        for item, (card, error) in zip(items, results, strict=False):
-            if error:
-                item["error"] = str(error)
-            else:
-                self._set_card_result(item, card)
-            callback(item)
+        for slot, resolution in zip(slots, resolutions, strict=True):
+            slot.resolved = resolution.card
+            slot.error = resolution.error or (None if resolution.card else "Card not found")
+
+    def _load_slot_images(self, slot: CardSlot, size: tuple[int, int]) -> None:
+        card = slot.display_print
+        if card is None:
+            return
+        slot.images = self.backend.load_thumbnails(card, size)
+
+    # -- progress -----------------------------------------------------------
 
     def _start_progress(self, title: str) -> None:
         self._close_progress()
         self.progress_dialog = ProgressDialog(self, title)
 
     def _report_progress(self, message: str, current: int, total: int) -> None:
-        self.after(0, self._update_progress, message, current, total)
+        """Report progress from a backend worker thread."""
+        self._ui.post(self._update_progress, message, current, total)
 
     def _update_progress(self, message: str, current: int, total: int) -> None:
         if self.progress_dialog is not None:
@@ -149,40 +152,25 @@ class App(tk.Tk):
 
     def _finish_progress(self) -> None:
         if self.progress_dialog is not None:
-            self.after(0, self._close_progress)
+            self._ui.post(self._close_progress)
 
     def _close_progress(self) -> None:
         if self.progress_dialog is not None:
             self.progress_dialog.destroy()
             self.progress_dialog = None
 
-    def _set_card_result(self, item: CardItem, card: CardRecord | None) -> None:
-        item["card"] = card
-        item["default_card"] = card
-        card_name = self.backend.card_name(card) if card else ""
-        if card_name:
-            item["name"] = card_name
+    # -- windows ------------------------------------------------------------
 
-    def _load_card_images(self, item: CardItem, callback: Callable[[CardItem], None]) -> None:
-        try:
-            card = item.get("card")
-            images = self._available_images(self.backend.load_card_images(card)) if card else ()
-            item["images"] = images
-            item["image"] = images[0] if images else None
-        except (OSError, ValueError) as error:
-            item["error"] = str(error)
-        callback(item)
-
-    def _open_chooser(self, item: CardItem, viewer: FullImageWindow | None = None) -> None:
-        def on_choose(updated_item: CardItem) -> None:
-            self._printing_chosen(updated_item)
+    def _open_chooser(self, slot: CardSlot, viewer: FullImageWindow | None = None) -> None:
+        def on_choose(updated: CardSlot) -> None:
+            self._printing_chosen(updated)
             if isinstance(viewer, FullImageWindow):
-                viewer.update_current_images(self.card_grid.get_full_images(updated_item))
+                viewer.update_current_images(self.card_grid.get_full_images(updated))
 
         self._close_printing_chooser()
         self.printing_chooser = PrintingChooser(
             self,
-            item,
+            slot,
             self.backend,
             on_choose,
             on_open_full_image=self._open_full_image,
@@ -216,22 +204,28 @@ class App(tk.Tk):
             if window.winfo_exists():
                 window.destroy()
 
-    def _printing_chosen(self, item: CardItem) -> None:
-        printing = item.get("chosen_print")
-        if not printing:
-            return
-        item["image"] = printing.get("image")
-        item["images"] = tuple(printing.get("images") or (item["image"],))
-        self.card_grid.refresh_item(item)
+    def _printing_chosen(self, slot: CardSlot) -> None:
+        """Reload the grid thumbnail for a slot whose printing just changed."""
 
-    def _parse_input(self, raw_text: str) -> list[CardItem]:
-        return [self.backend.parse_card_line(line) for line in raw_text.splitlines() if line.strip()]
+        def load() -> None:
+            size = art_size_for(self.card_grid.grid_zoom)
+            self._load_slot_images(slot, size)
+            slot.image_size = size
+            self._ui.post(self.card_grid.refresh_slot, slot)
+
+        slot.image_loading = True
+        self.card_grid.refresh_slot(slot)
+        self.executor.submit(load)
+
+    # -- caches -------------------------------------------------------------
 
     def _on_clear_request_cache(self) -> None:
         self.backend.clear_json_cache()
 
     def _on_clear_image_cache(self) -> None:
         self.backend.clear_image_cache()
+
+    # -- export -------------------------------------------------------------
 
     def _show_path_confirmation(self, title: str, message: str, path: str) -> None:
         self.clipboard_clear()
@@ -240,37 +234,53 @@ class App(tk.Tk):
         messagebox.showinfo(title, f"{message}\nThe path has been copied to the clipboard.", parent=self)
 
     def _on_download_images(self) -> None:
-        if not self.items:
+        if not self.slots:
             messagebox.showinfo("Download images", "Import cards first.")
             return
         folder = filedialog.askdirectory(title="Choose folder for card images", parent=self)
         if not folder:
             return
 
-        for item_index, item in enumerate(self.card_grid.get_display_items(), start=1):
-            source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-            if not source:
-                continue
-            self.executor.submit(self._save_item_images, folder, item_index, item, source)
+        for index, slot in enumerate(self.slots, start=1):
+            card = slot.display_print
+            if card is not None:
+                self.executor.submit(self._save_slot_images, folder, index, slot, card)
         self._show_path_confirmation("Download images", f"Downloading images to {folder}.", folder)
 
+    def _save_slot_images(self, folder: str, index: int, slot: CardSlot, card: CardPrint) -> None:
+        images = self.backend.load_images(card, high_quality=True)
+        if not images:
+            return
+        base_name = self._safe_filename(slot.name)
+        # Raw identifiers, not export syntax: the foil marker `*F*` and the
+        # foil star are both illegal in Windows filenames.
+        set_code = self._safe_filename(card.set_code)
+        collector_number = self._safe_filename(card.collector_number)
+        for copy_number in range(1, slot.quantity + 1):
+            for face_index, image in enumerate(images, start=1):
+                filename = (
+                    f"{index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
+                )
+                image.save(Path(folder) / filename, format="PNG")
+
     def _on_export_list(self) -> None:
-        if not self.items:
+        if not self.slots:
             messagebox.showinfo("Export list", "Import cards first.")
             return
 
-        combined: dict[tuple[str, str, str], int] = {}
-        for item in self.card_grid.get_display_items():
-            source = item.get("chosen_print") or item.get("default_card") or item.get("card")
-            set_code, collector_number = (
-                self.backend.printing_export_fields(source, item.get("printing_hint")) if source else ("", "")
-            )
-            key = (item["name"], set_code, collector_number)
-            combined[key] = combined.get(key, 0) + item["quantity"]
-        lines = [
-            f"{quantity} {name} ({set_code}) {collector_number}"
-            for (name, set_code, collector_number), quantity in combined.items()
-        ]
+        # Grouping on the backend's own export text guarantees the result
+        # re-imports cleanly: identical cards collapse into one quantified line.
+        combined: dict[str, int] = {}
+        for slot in self.slots:
+            card = slot.display_print
+            if card is None:
+                continue  # the card was not found, so there is no printing to export
+            card_text = self.backend.export_card_text(card, slot.entry)
+            combined[card_text] = combined.get(card_text, 0) + slot.quantity
+        if not combined:
+            messagebox.showinfo("Export list", "None of the imported cards were found.")
+            return
+        lines = [f"{quantity} {card_text}" for card_text, quantity in combined.items()]
         export_text = "\n".join(lines) + "\n"
 
         dialog = ExportChoiceDialog(self)
@@ -294,24 +304,6 @@ class App(tk.Tk):
         with Path(path).open("w", encoding="utf-8") as output_file:
             output_file.write(export_text)
         self._show_path_confirmation("Export list", f"Saved card list to {path}.", path)
-
-    def _save_item_images(self, folder: str, item_index: int, item: CardItem, source: CardRecord) -> None:
-        images = self._available_images(self.backend.load_card_images(source, high_quality=True))
-        if not images:
-            return
-
-        base_name = self._safe_filename(item["name"])
-        set_code, collector_number = self.backend.printing_export_fields(source)
-        for copy_number in range(1, item["quantity"] + 1):
-            for face_index, image in enumerate(images, start=1):
-                filename = (
-                    f"{item_index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
-                )
-                image.save(Path(folder) / filename, format="PNG")
-
-    @staticmethod
-    def _available_images(image_pair: ImagePair) -> tuple[Image.Image, ...]:
-        return tuple(image for image in image_pair if image is not None)
 
     @staticmethod
     def _safe_filename(name: str) -> str:

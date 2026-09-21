@@ -11,6 +11,9 @@ type FaceAction = Callable[[int, int], None]
 type ImageLoader = Callable[[int, "FullImageWindow"], None]
 MIN_FACES: Final[int] = 2
 FOUR_BUTTON: Final[int] = 4
+# How many entries either side of the visible one keep their full-resolution
+# art, so stepping back and forth stays instant without holding the whole grid.
+RETAINED_NEIGHBOURS: Final[int] = 1
 
 
 @dataclass(frozen=True)
@@ -65,14 +68,14 @@ class FullImageWindow(tk.Toplevel):
         if options.action_callback is not None and options.action_text:
             self.action_button = ttk.Button(controls, text=options.action_text, command=self._run_action)
             self.action_button.grid(row=0, column=1, padx=5, pady=5)
-        if any(len(group) > 1 for group in self.images):
-            self.face_button = ttk.Button(controls, text="Flip", command=self._next_face)
-            self.face_button.grid(row=0, column=2, padx=5, pady=5)
-            next_column = 3
-        else:
-            next_column = 2
+        # Art is loaded lazily, so no entry has its faces yet. The button is
+        # created up front and shown once the visible entry turns out to have
+        # more than one face.
+        self.face_button = ttk.Button(controls, text="Flip", command=self._next_face)
+        self.face_button.grid(row=0, column=2, padx=5, pady=5)
+        self.face_button.grid_remove()
         self.next_button = ttk.Button(controls, text="Next", command=self._next)
-        self.next_button.grid(row=0, column=next_column, padx=5, pady=5, sticky="e")
+        self.next_button.grid(row=0, column=3, padx=5, pady=5, sticky="e")
 
         self.bind("<Configure>", lambda _event: self._render())
         self.canvas.bind("<ButtonPress-1>", self._start_pan)
@@ -101,11 +104,26 @@ class FullImageWindow(tk.Toplevel):
         self.offset_y = 0
         self.previous_button.configure(state="normal" if self.index else "disabled")
         self.next_button.configure(state="normal" if self.index < len(self.images) - 1 else "disabled")
-        self.face_index = min(self.face_index, len(self.images[self.index]) - 1)
-        if hasattr(self, "face_button"):
-            self.face_button.configure(state="normal" if len(self.images[self.index]) > 1 else "disabled")
+        # A different card starts on its front face.
+        self.face_index = 0
+        self._update_face_button()
+        self._release_distant_images()
         self._ensure_current_loaded()
         self._render()
+
+    def _release_distant_images(self) -> None:
+        """Drop full-resolution art for entries away from the one on screen.
+
+        Each entry is several megabytes, so browsing a large grid would
+        otherwise accumulate every card visited. Anything dropped here is
+        reloaded on demand when the user navigates back to it.
+        """
+        if self.image_loader is None:
+            return  # nothing could load them again
+        nearest = range(self.index - RETAINED_NEIGHBOURS, self.index + RETAINED_NEIGHBOURS + 1)
+        for position, group in enumerate(self.images):
+            if group and position not in nearest:
+                self.images[position] = []
 
     def _ensure_current_loaded(self) -> None:
         if self.image_loader and not self.images[self.index] and self.index not in self._loading_indices:
@@ -117,16 +135,33 @@ class FullImageWindow(tk.Toplevel):
             self.action_callback(self.index, self)
 
     def update_current_images(self, images: Image.Image | Sequence[Image.Image]) -> None:
-        if self._closed:
+        """Replace the art for the entry currently on screen."""
+        self.set_images(self.index, images)
+
+    def set_images(self, index: int, images: Image.Image | Sequence[Image.Image]) -> None:
+        """Store loaded art for `index`, which may no longer be the visible one.
+
+        Loads are asynchronous, so the user can navigate away before one
+        arrives; delivering to the requested index rather than the current one
+        keeps a slow load from painting over the wrong card.
+        """
+        if self._closed or not 0 <= index < len(self.images):
             return
-        self.images[self.index] = cast(
-            "list[Image.Image]", list(images) if isinstance(images, (list, tuple)) else [images]
-        )
-        self._loading_indices.discard(self.index)
+        self.images[index] = cast("list[Image.Image]", list(images) if isinstance(images, (list, tuple)) else [images])
+        self._loading_indices.discard(index)
+        if index != self.index:
+            self._release_distant_images()
+            return
         self.face_index = 0
-        if hasattr(self, "face_button"):
-            self.face_button.configure(state="normal" if len(self.images[self.index]) > 1 else "disabled")
+        self._update_face_button()
         self._render()
+
+    def _update_face_button(self) -> None:
+        """Show the Flip control only while a multi-faced card is on screen."""
+        if len(self.images[self.index]) >= MIN_FACES:
+            self.face_button.grid()
+        else:
+            self.face_button.grid_remove()
 
     def _next_face(self) -> None:
         if len(self.images[self.index]) < MIN_FACES:

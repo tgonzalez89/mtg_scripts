@@ -1,6 +1,10 @@
 import platform
 import tkinter as tk
 from tkinter import ttk
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class ScrollableFrame(ttk.Frame):
@@ -8,6 +12,9 @@ class ScrollableFrame(ttk.Frame):
 
     def __init__(self, container: tk.Misc) -> None:
         super().__init__(container)
+        # Notified whenever the vertical viewport moves, however it was moved
+        # (wheel, scrollbar drag, or programmatic scroll).
+        self.on_viewport_change: Callable[[], None] | None = None
 
         self.canvas = tk.Canvas(self)
         self._scrollbar_y = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -21,7 +28,7 @@ class ScrollableFrame(ttk.Frame):
         self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
         self.canvas.bind("<Configure>", self._resize_inner_frame, add="+")
 
-        self.canvas.configure(yscrollcommand=self._scrollbar_y.set, xscrollcommand=self._scrollbar_x.set)
+        self.canvas.configure(yscrollcommand=self._on_yscroll, xscrollcommand=self._scrollbar_x.set)
 
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self._scrollbar_y.grid(row=0, column=1, sticky="ns")
@@ -34,6 +41,12 @@ class ScrollableFrame(ttk.Frame):
         # Bind mousewheel to the canvas inside ScrollableFrame
         self._bind_mousewheel()
         self._bind_horizontal_mousewheel()
+
+    def _on_yscroll(self, first: float, last: float) -> None:
+        # Tk passes these through as strings; `Scrollbar.set` accepts either.
+        self._scrollbar_y.set(first, last)
+        if self.on_viewport_change:
+            self.on_viewport_change()
 
     def _resize_inner_frame(self, event: tk.Event[tk.Misc]) -> None:
         self.canvas.itemconfigure(self.canvas_window, width=event.width)
