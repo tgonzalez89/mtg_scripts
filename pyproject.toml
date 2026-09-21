@@ -103,6 +103,7 @@ ignore = [
     "D1",     # Ignore docstring rules related to public modules, classes, methods, functions, etc.
     "D203",   # Conflicts with D211.
     "D213",   # Conflicts with D212.
+    "ERA001", # Allow commented-out code.
     "FIX002", # Allow TODO comments without requiring immediate resolution.
     "S311",   # Allow `random` module usage for non-cryptographic purposes.
     "T201",   # Allow print statements. They are used in the CLI and for debugging.

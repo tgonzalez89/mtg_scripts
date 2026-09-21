@@ -6,6 +6,14 @@ A collection of command-line and graphical tools for Magic: The Gathering deck b
 
 Install [uv](https://docs.astral.sh/uv/#installation) and run `uv sync` to create the project environment. The Forge auto battler also requires a local Forge installation and Tesseract OCR data. The `tesserocr` package can require a platform-specific wheel.
 
+After cloning (or re-cloning) the repository, install the git hooks so `pre-commit` checks run automatically:
+
+```bash
+uv run pre-commit install --install-hooks
+```
+
+Git hooks live under `.git/hooks`, which is not tracked by git, so this step must be repeated for every new clone.
+
 ### Optional Dependencies
 
 Some scripts require dependencies that are not installed by default. To install all dependencies, run:
