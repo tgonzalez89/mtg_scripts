@@ -66,11 +66,11 @@ uv sync --all-extras
 - `make_mtg_table`
 - `vanilla`
 
+Each entry point provides its own `--help` output where command-line options apply.
+
 ## GUI entry
 
 - `print_picker`
-
-Each entry point provides its own `--help` output where command-line options apply.
 
 ## Project layout
 
