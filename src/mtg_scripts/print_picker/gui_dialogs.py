@@ -45,7 +45,7 @@ class ExportChoiceDialog(tk.Toplevel):
         super().__init__(master)
         self.title("Export card list")
         self.resizable(width=False, height=False)
-        self.result = None
+        self.result: str | None = None
         self.transient(cast("tk.Tk", master))
 
         ttk.Label(self, text="How would you like to export the card list?").pack(padx=20, pady=(18, 12))
@@ -63,6 +63,32 @@ class ExportChoiceDialog(tk.Toplevel):
 
     def _finish(self, result: str) -> None:
         self.result = result
+        self.destroy()
+
+
+class DownloadImagesDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.title("Download card images")
+        self.resizable(width=False, height=False)
+        self.result: bool | None = None
+        self.transient(cast("tk.Tk", master))
+        self.unique_images = tk.BooleanVar(self, value=False)
+
+        ttk.Checkbutton(
+            self,
+            text="Make repeated images unique (slight pixel changes)",
+            variable=self.unique_images,
+        ).pack(padx=20, pady=(18, 12))
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill="x", padx=20, pady=(0, 18))
+        ttk.Button(button_frame, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(button_frame, text="Download", command=self._confirm).pack(side="right", padx=(0, 8))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.grab_set()
+
+    def _confirm(self) -> None:
+        self.result = self.unique_images.get()
         self.destroy()
 
 

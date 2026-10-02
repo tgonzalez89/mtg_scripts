@@ -62,7 +62,7 @@ class Card(ttk.Frame):
         self.name_label.grid(row=0, column=0, sticky="ew")
         self.image_label = ttk.Label(self, anchor="center")
         self.image_label.pack(padx=5, pady=5)
-        self.status_label = ttk.Label(self, text=slot.error or "", anchor="center")
+        self.status_label = ttk.Label(self, text=slot.status_text, anchor="center")
         self.status_label.pack(fill="x", padx=5, pady=(0, 5))
         self._bind_events()
         self.set_zoom(interaction.zoom)
@@ -107,14 +107,7 @@ class Card(ttk.Frame):
         if not self._art_visible:
             self.image_label.configure(image="", text="")
             return
-        if self.slot.image_loading:
-            status = "Image Loading..."
-        elif self.slot.error:
-            # The status label below already reports the error; repeating it
-            # here would show the same message twice in one cell.
-            status = ""
-        else:
-            status = "No Image"
+        status = "" if self.slot.status_text else "No Image"
         self.image_label.configure(image="", text=status)
 
     def _render(self, image: Image.Image, size: tuple[int, int]) -> None:
@@ -142,7 +135,7 @@ class Card(ttk.Frame):
         self._render_key = None
         self._image_ref = None
         self.name_label.configure(text=self.slot.label)
-        self.status_label.configure(text=self.slot.error or "")
+        self.status_label.configure(text=self.slot.status_text)
         self._refresh_image()
         self._update_face_button()
 

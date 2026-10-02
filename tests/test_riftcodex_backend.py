@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote_plus
 
 from mtg_scripts.print_picker.models import PrintQuery, display_label
 from mtg_scripts.print_picker.riftcodex_backend import RiftCodexBackend, _matches_identity
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _item(**overrides: object) -> dict[str, Any]:
@@ -43,6 +46,86 @@ def test_parse_line_without_a_printing_code() -> None:
     assert entry.quantity == 2
     assert entry.name == "Tibbers"
     assert not entry.query
+
+
+def test_exact_name_with_apostrophe_resolves_printing_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = _backend(tmp_path)
+    name = "Gentlemen's Duel"
+    exact_url = f"https://api.riftcodex.com/cards/name?exact={quote_plus(name)}"
+    requested_urls: list[str] = []
+
+    def request_json(url: str) -> dict[str, Any]:
+        requested_urls.append(url)
+        if url != exact_url:
+            return {"items": []}
+        return {
+            "items": [
+                _item(
+                    id="gentlemens-duel",
+                    riftbound_id="ogs-008-024",
+                    name=name,
+                    collector_number=8,
+                    set={"set_id": "OGS", "label": "Proving Grounds"},
+                    metadata={"clean_name": "Gentlemens Duel"},
+                )
+            ]
+        }
+
+    monkeypatch.setattr(backend, "request_json", request_json)
+    resolution = backend.resolve([RiftCodexBackend.parse_line("3 Gentlemen's Duel (OGS-008)")])[0]
+
+    assert requested_urls == [exact_url]
+    assert resolution.entry.quantity == 3
+    assert resolution.card is not None
+    assert resolution.card.name == name
+    assert resolution.card.collector_number == "008"
+
+
+def test_fuzzy_fallback_resolves_case_variant_with_requested_printing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = _backend(tmp_path)
+    backend._set_release_dates["opp"] = ""
+    exact_url = "https://api.riftcodex.com/cards/name?exact=master+yi+-+Wuju+bladesMan"
+    fuzzy_url = "https://api.riftcodex.com/cards/name?fuzzy=master+yi+wuju+bladesman"
+    requested_urls: list[str] = []
+
+    def request_json(url: str) -> dict[str, Any]:
+        requested_urls.append(url)
+        if url == exact_url:
+            return {
+                "items": [
+                    _item(
+                        id="master-yi-wuju-bladesman-promo",
+                        riftbound_id="opp-019-024",
+                        name="Master Yi - Wuju Bladesman",
+                        collector_number=19,
+                        set={"set_id": "OPP", "label": "Organized Play Promo"},
+                    )
+                ]
+            }
+        if url == fuzzy_url:
+            return {
+                "items": [
+                    _item(
+                        id="master-yi-wuju-bladesman-starter",
+                        riftbound_id="ogs-019-024",
+                        name="Master Yi - Wuju Bladesman (Starter)",
+                        collector_number=19,
+                        set={"set_id": "OGS", "label": "Proving Grounds"},
+                        metadata={"clean_name": "Master Yi Wuju Bladesman Starter"},
+                    )
+                ]
+            }
+        return {"items": []}
+
+    monkeypatch.setattr(backend, "request_json", request_json)
+    resolution = backend.resolve([RiftCodexBackend.parse_line("1 master yi - Wuju bladesMan  (OGS-019)")])[0]
+
+    assert requested_urls == [exact_url, fuzzy_url]
+    assert resolution.card is not None
+    assert resolution.card.name == "Master Yi - Wuju Bladesman (Starter)"
+    assert resolution.card.collector_number == "019"
 
 
 def test_collector_number_keeps_the_padded_decklist_form(tmp_path: Path) -> None:

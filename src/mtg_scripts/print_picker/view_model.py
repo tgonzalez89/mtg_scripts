@@ -28,6 +28,7 @@ class CardSlot:
     resolved: CardPrint | None = None
     chosen: CardPrint | None = None
     error: str | None = None
+    info_loading: bool = False
     images: tuple[Image.Image, ...] = ()
     # The box `images` were fitted to, so the grid knows when it needs to
     # reload sharper art or can shrink back down.
@@ -57,6 +58,16 @@ class CardSlot:
         if self.label_override is not None:
             return self.label_override
         return self.name
+
+    @property
+    def status_text(self) -> str:
+        if self.error:
+            return self.error
+        if self.info_loading:
+            return "Loading info..."
+        if self.image_loading:
+            return "Loading image..."
+        return ""
 
     @property
     def current_image(self) -> Image.Image | None:

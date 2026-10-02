@@ -85,11 +85,18 @@ class RiftCodexBackend(CardBackend):
 
     def _resolve_one(self, entry: DeckEntry) -> Resolution:
         try:
-            cards = [self._to_print(item) for item in self._search_exact(entry.name)]
+            items = self._search_exact(entry.name)
+            cards = [self._to_print(item) for item in items]
         except (OSError, ValueError) as error:
             return Resolution(entry=entry, error=str(error))
         if entry.query:
             card = next((card for card in cards if _matches_identity(card, entry.query)), None)
+            if card is None:
+                try:
+                    fuzzy_cards = [self._to_print(item) for item in self._search_fuzzy(entry.name)]
+                except (OSError, ValueError) as error:
+                    return Resolution(entry=entry, error=str(error))
+                card = next((card for card in fuzzy_cards if _matches_identity(card, entry.query)), None)
         else:
             card = cards[0] if cards else None
         return Resolution(entry=entry, card=card)
@@ -128,16 +135,16 @@ class RiftCodexBackend(CardBackend):
     # -- API access ---------------------------------------------------------
 
     def _search_exact(self, name: str) -> list[dict[str, Any]]:
-        return self._search(RIFTCODEX_SEARCH_URL, name)
+        return self._search(RIFTCODEX_SEARCH_URL, name.strip())
 
     def _search_fuzzy(self, name: str) -> list[dict[str, Any]]:
-        return self._search(RIFTCODEX_FUZZY_SEARCH_URL, name)
+        return self._search(RIFTCODEX_FUZZY_SEARCH_URL, _normalize_name(name))
 
     def _search(self, base_url: str, name: str) -> list[dict[str, Any]]:
-        normalized = _normalize_name(name)
-        if not normalized:
+        query = name.strip()
+        if not query:
             return []
-        data = cast("_RiftCodexSearchResponse", self.request_json(base_url + quote_plus(normalized)))
+        data = cast("_RiftCodexSearchResponse", self.request_json(base_url + quote_plus(query)))
         return data.get("items", [])
 
     def _release_date(self, set_code: str) -> str:

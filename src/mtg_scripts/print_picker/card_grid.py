@@ -50,6 +50,7 @@ class CardGrid(ttk.Frame):
         self.on_choose = on_choose
         self.on_open_full_image = on_open_full_image
         self.chooser_mode = chooser_mode
+        self.on_load_complete: Callable[[], None] | None = None
         self.cards: list[Card] = []
         self.slots: list[CardSlot] = []
         self.grid_zoom = 1.0
@@ -61,6 +62,7 @@ class CardGrid(ttk.Frame):
         self._global_bindings: list[tuple[str, str]] = []
         self._tasks: set[Future[None]] = set()
         self._image_loader: SlotLoader | None = None
+        self._pending_image_loads = 0
         self._refine_timer: str | None = None
         # Workers never touch Tk directly; they post results here instead.
         self._ui = UiQueue(self)
@@ -111,6 +113,7 @@ class CardGrid(ttk.Frame):
             slot.release_images()
         self.slots.clear()
         self._image_loader = None
+        self._pending_image_loads = 0
         self._configured_columns = 0
 
     def destroy(self) -> None:
@@ -151,10 +154,14 @@ class CardGrid(ttk.Frame):
     ) -> None:
         """Resolve `slots` off the UI thread, then render and load their images."""
         self.clear()
-        self.slots = slots
+        ordered = sort_slots(slots, include_name=not self.chooser_mode)
+        self.slots = ordered
         self._image_loader = image_loader
+        for slot in ordered:
+            self._add_cards_for(slot)
+        self._schedule_reflow()
         generation = self._load_generation
-        self._submit_task(self._run_resolve, slots, generation, resolve)
+        self._submit_task(self._run_resolve, ordered, generation, resolve)
 
     def _run_resolve(self, slots: list[CardSlot], generation: int, resolve: SlotLoader) -> None:
         """Worker thread: resolve the batch, then hand rendering to the UI thread."""
@@ -169,14 +176,22 @@ class CardGrid(ttk.Frame):
         if generation != self._load_generation or self._closed:
             return
         ordered = sort_slots(slots, include_name=not self.chooser_mode)
+        slot_order = {id(slot): index for index, slot in enumerate(ordered)}
+        self.slots = ordered
+        self.cards.sort(key=lambda card: slot_order[id(card.slot)])
+        image_slots: list[CardSlot] = []
         for slot in ordered:
-            if self._image_loader:
+            if self._image_loader and slot.display_print is not None:
                 slot.image_loading = True
-            self._add_cards_for(slot)
+                image_slots.append(slot)
+            self.refresh_slot(slot)
         self._schedule_reflow()
-        if self._image_loader:
+        self._pending_image_loads = len(image_slots)
+        if image_slots and self._image_loader:
             self.update_idletasks()
-            self._start_image_loading(ordered, generation)
+            self._start_image_loading(image_slots, generation)
+        elif self.on_load_complete is not None:
+            self.on_load_complete()
 
     def _start_image_loading(self, slots: list[CardSlot], generation: int) -> None:
         if generation != self._load_generation or self._closed or self._image_loader is None:
@@ -193,11 +208,15 @@ class CardGrid(ttk.Frame):
         except Exception as error:  # noqa: BLE001 - worker failures must finish the loading state
             slot.error = str(error)
         slot.image_loading = False
-        self._ui.post(self._refresh_slot, slot, generation)
+        self._ui.post(self._finish_image_load, slot, generation)
 
-    def _refresh_slot(self, slot: CardSlot, generation: int) -> None:
-        if generation == self._load_generation and not self._closed:
-            self.refresh_slot(slot)
+    def _finish_image_load(self, slot: CardSlot, generation: int) -> None:
+        if generation != self._load_generation or self._closed:
+            return
+        self.refresh_slot(slot)
+        self._pending_image_loads -= 1
+        if self._pending_image_loads == 0 and self.on_load_complete is not None:
+            self.on_load_complete()
 
     def _add_cards_for(self, slot: CardSlot) -> None:
         for copy_number in range(1, max(1, slot.quantity) + 1):

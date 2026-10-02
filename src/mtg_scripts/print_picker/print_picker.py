@@ -2,17 +2,20 @@ import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .card_grid import CardGrid, art_size_for
 from .full_image_window import FullImageWindow, ImageWindowOptions
-from .gui_dialogs import ExportChoiceDialog, GameSelectionDialog, ProgressDialog
+from .gui_dialogs import DownloadImagesDialog, ExportChoiceDialog, GameSelectionDialog, ProgressDialog
 from .printing_chooser import PrintingChooser
 from .riftcodex_backend import RiftCodexBackend
 from .scrollable_zoomable_text_frame import ScrollableZoomableTextFrame
 from .scryfall_backend import ScryfallBackend
 from .ui_queue import UiQueue
 from .view_model import CardSlot
+
+UNIQUE_IMAGE_TOO_SMALL = "Image is too small to encode a unique copy identity."
+IMAGE_PIXEL_ACCESS_UNAVAILABLE = "Unable to access image pixels."
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -77,10 +80,12 @@ class App(tk.Tk):
             on_choose=self._open_chooser,
             on_open_full_image=self._open_full_image,
         )
+        self.card_grid.on_load_complete = self._on_import_complete
         self.main_panes.add(self.card_grid)
 
     def _build_buttons(self) -> None:
-        ttk.Button(self.button_frame, text="Import", command=self._on_import).pack(fill="x", pady=5)
+        self.import_button = ttk.Button(self.button_frame, text="Import", command=self._on_import)
+        self.import_button.pack(fill="x", pady=5)
         ttk.Button(self.button_frame, text="Clear request cache", command=self._on_clear_request_cache).pack(
             fill="x", pady=5
         )
@@ -107,7 +112,9 @@ class App(tk.Tk):
             messagebox.showinfo("Import", "Enter at least one card name.")
             return
         self.slots = self._parse_input(raw_text)
-        self.card_grid.clear()
+        for slot in self.slots:
+            slot.info_loading = True
+        self.import_button.configure(state="disabled")
         if self.backend.supports_progress:
             self._start_progress("Loading card data")
         self.card_grid.load_slots(self.slots, self._resolve_slots, self._load_slot_images)
@@ -125,10 +132,15 @@ class App(tk.Tk):
         try:
             resolutions = self.backend.resolve([slot.entry for slot in slots], self._report_progress)
         finally:
+            for slot in slots:
+                slot.info_loading = False
             self._finish_progress()
         for slot, resolution in zip(slots, resolutions, strict=True):
             slot.resolved = resolution.card
             slot.error = resolution.error or (None if resolution.card else "Card not found")
+
+    def _on_import_complete(self) -> None:
+        self.import_button.configure(state="normal")
 
     def _load_slot_images(self, slot: CardSlot, size: tuple[int, int]) -> None:
         card = slot.display_print
@@ -237,6 +249,10 @@ class App(tk.Tk):
         if not self.slots:
             messagebox.showinfo("Download images", "Import cards first.")
             return
+        dialog = DownloadImagesDialog(self)
+        self.wait_window(dialog)
+        if dialog.result is None:
+            return
         folder = filedialog.askdirectory(title="Choose folder for card images", parent=self)
         if not folder:
             return
@@ -244,10 +260,25 @@ class App(tk.Tk):
         for index, slot in enumerate(self.slots, start=1):
             card = slot.display_print
             if card is not None:
-                self.executor.submit(self._save_slot_images, folder, index, slot, card)
+                self.executor.submit(
+                    self._save_slot_images,
+                    folder,
+                    index,
+                    slot,
+                    card,
+                    make_copies_unique=dialog.result,
+                )
         self._show_path_confirmation("Download images", f"Downloading images to {folder}.", folder)
 
-    def _save_slot_images(self, folder: str, index: int, slot: CardSlot, card: CardPrint) -> None:
+    def _save_slot_images(
+        self,
+        folder: str,
+        index: int,
+        slot: CardSlot,
+        card: CardPrint,
+        *,
+        make_copies_unique: bool = False,
+    ) -> None:
         images = self.backend.load_images(card, high_quality=True)
         if not images:
             return
@@ -261,7 +292,37 @@ class App(tk.Tk):
                 filename = (
                     f"{index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
                 )
-                image.save(Path(folder) / filename, format="PNG")
+                image_to_save = (
+                    self._make_copy_unique(image, index, copy_number, face_index) if make_copies_unique else image
+                )
+                image_to_save.save(Path(folder) / filename, format="PNG")
+
+    @staticmethod
+    def _make_copy_unique(image: Image.Image, slot_index: int, copy_number: int, face_index: int) -> Image.Image:
+        image_copy = image.convert("RGBA")
+        identity = b"".join(value.to_bytes(8, byteorder="big") for value in (slot_index, copy_number, face_index))
+        required_bits = len(identity) * 8
+        if image_copy.width * image_copy.height * 3 < required_bits:
+            raise ValueError(UNIQUE_IMAGE_TOO_SMALL)
+
+        pixels = image_copy.load()
+        if pixels is None:
+            raise RuntimeError(IMAGE_PIXEL_ACCESS_UNAVAILABLE)
+        for bit_index in range(required_bits):
+            byte = identity[bit_index // 8]
+            bit = (byte >> (7 - bit_index % 8)) & 1
+            pixel_index, channel = divmod(bit_index, 3)
+            x = pixel_index % image_copy.width
+            y = pixel_index // image_copy.width
+            red, green, blue, alpha = cast("tuple[int, int, int, int]", pixels[x, y])
+            if channel == 0:
+                red = (red & 0xFE) | bit
+            elif channel == 1:
+                green = (green & 0xFE) | bit
+            else:
+                blue = (blue & 0xFE) | bit
+            pixels[x, y] = (red, green, blue, alpha)
+        return image_copy
 
     def _on_export_list(self) -> None:
         if not self.slots:
