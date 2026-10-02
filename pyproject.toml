@@ -26,6 +26,7 @@ requires-python = ">=3.14"
 # ---------------------------------------------------------------------------
 
 dependencies = [
+    "curl-cffi",
     "numpy",
     "opencv-python",
     "pillow",
@@ -78,6 +79,7 @@ deck_exporter = "mtg_scripts.cli:deck_exporter"
 forge_auto_battler = "mtg_scripts.cli:forge_auto_battler"
 moxfield_to_forge = "mtg_scripts.cli:moxfield_to_forge"
 mana_base_creator = "mtg_scripts.cli:mana_base_creator"
+mana_base_recipe = "mtg_scripts.cli:mana_base_recipe"
 count_occurrences = "mtg_scripts.cli:count_occurrences"
 filter_list = "mtg_scripts.cli:filter_list"
 make_mtg_table = "mtg_scripts.cli:make_mtg_table"

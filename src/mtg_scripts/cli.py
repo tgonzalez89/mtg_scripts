@@ -64,6 +64,11 @@ def mana_base_creator() -> None:
     _run("mtg_scripts.mana_base_creator.mana_base_creator")
 
 
+def mana_base_recipe() -> None:
+    """Run the mana-base recipe launcher."""
+    _run("mtg_scripts.mana_base_creator.mana_base_recipe")
+
+
 def count_occurrences() -> None:
     """Run the line-occurrence counter."""
     _run("mtg_scripts.other_scripts.count_occurrences")

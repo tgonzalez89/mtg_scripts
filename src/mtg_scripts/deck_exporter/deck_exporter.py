@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Final, TypedDict
 
-import requests
+from curl_cffi import requests
 
 DEBUG: Final[bool] = True
 HTTP_OK: Final[int] = 200
@@ -113,17 +113,18 @@ def download_deck(deck_id: str) -> MoxfieldDeckData | None:
 
     """
     moxfield_api_url = "https://api.moxfield.com/v2/decks/all/"
-    headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"}
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.moxfield.com",
+        "Referer": f"https://www.moxfield.com/decks/{deck_id}",
+    }
     try:
-        response = requests.get(moxfield_api_url + deck_id, headers=headers, timeout=30)
+        response = requests.get(moxfield_api_url + deck_id, headers=headers, timeout=30, impersonate="chrome")
         response.raise_for_status()
         data: MoxfieldDeckData = response.json()
         if DEBUG:
             Path("debug.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except requests.HTTPError as error:
-        print(f"HTTP Error: {error} - Failed to download deck {deck_id}")
-        return None
-    except requests.RequestException as error:
+    except requests.RequestsError as error:
         print(f"Error downloading deck {deck_id}: {error}")
         return None
     else:

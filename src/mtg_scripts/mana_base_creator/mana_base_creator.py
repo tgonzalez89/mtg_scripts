@@ -3,7 +3,10 @@ import argparse
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Mapping  # noqa: TC003 (needed at runtime: evaluated in a module-level variable annotation)
+from collections.abc import (  # noqa: TC003 (needed at runtime: evaluated in a module-level variable annotation)
+    Mapping,
+    Sequence,
+)
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +43,7 @@ class CardFilterConfig:
     allow_off_color_lands: bool
 
 
-def parse_arguments() -> argparse.Namespace:
+def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a mana base for a Commander deck in Magic: The Gathering.")
 
     parser.add_argument("--colors", type=str, required=True, help='Colors of the deck (e.g., "WUBRG")')
@@ -69,38 +72,35 @@ def parse_arguments() -> argparse.Namespace:
         help="Enable specific groups of lands (Scryfall queries)",
         default=[
             "otag:cycle-fetchland",  # Fetchlands
-            "otag:cycle-abu-dual-land",  # Original duals, fetchable
-            "otag:tricycle-land",  # Triomes, enter tapped, cycling, fetchable
-            "otag:cycle-shockland",  # Require 2 damage, fetchable
+            "otag:cycle-abu-dual-land",  # Original duals, untapped, fetchable
+            "otag:tricycle-land",  # Triomes, enter tapped, cycling for {3}, fetchable
+            "otag:cycle-shockland",  # Untapped if 2 damage, fetchable
             "otag:cycle-dual-surveil-land",  # Enter tapped, surveil 1, fetchable
-            "otag:cycle-bondland",  # Require >=2 opponents
+            "otag:cycle-bondland",  # Untapped if >=2 opponents
             "otag:cycle-triple-tapland",  # Cheap triomes
-            "otag:cycle-painland",  # Good painlands
-            "otag:cycle-soc-turbulent-land",  # Require opponents to control >=8 lands, fetchable
-            "otag:cycle-slowland",  # Require >=2 other lands
-            "otag:cycle-fastland",  # Require <=2 other lands
-            "otag:cycle-verge",
-            "otag:cycle-msh-lair-dual",
+            "otag:cycle-painland",  # Tap for {C}, dual for 1 damage
+            "otag:cycle-soc-turbulent-land",  # Untapped if opponents to control >=8 lands, fetchable
+            "otag:cycle-slowland",  # Untapped if >=2 other lands
+            "otag:cycle-fastland",  # Untapped if <=2 other lands
+            "otag:cycle-verge",  # Tap for one color, for the other if control one of the two basic types
+            "otag:cycle-msh-lair-dual",  # Tap for {C}, dual if control a basic or a land entered this turn
             "otag:cycle-tor-tainted-land",  # Tap for {C}, dual if control a swamp
-            "otag:cycle-checkland",  # Require one of the two corresponding basic land types
-            "otag:cycle-tangoland",  # Require 2 basic lands, fetchable
-            "otag:cycle-reveal-land",  # Require to reveal one of the two corresponding basic land types
+            "otag:cycle-checkland",  # Untapped if control one of the two basic types
+            "otag:cycle-tangoland",  # Untapped if control 2 basic lands, fetchable
+            "otag:cycle-reveal-land",  # Untapped if reveal one of the two basic types
             "otag:cycle-pathway",  # MDFC dual lands
-            "otag:cycle-horizon-land",  # Painland, can be sacrificed to draw a card
-            "otag:cycle-hybrid-filterland",  # Hybrid mana filter lands
-            "otag:cycle-ody-filterland",  # Signet-style filter lands
+            "otag:cycle-horizon-land",  # Dual for 1 damage, can be sacrificed to draw a card
+            "otag:cycle-hybrid-filterland",  # Hybrid mana filter dual lands, add one of each
+            "otag:cycle-ody-filterland",  # Signet-style filter dual lands, add one of each
             "otag:cycle-bicycle-land",  # Enter tapped, cycling, fetchable
             "otag:cycle-mh3-mdfc-dual-land",  # MDFC dual lands with spells in the front
             "otag:cycle-scry-land",  # Enter tapped, scry 1
             "otag:cycle-mh3-landscape",  # Basic tri fetches, tap for {C}, can be cycled for 3 colored mana
             "otag:cycle-snc-fetchland",  # Basic tri fetches, are sacrificed automatically and gain 1 life
-            "otag:cycle-ala-panorama",  # Basic tri fetches, tap for add {C}, cost 1 to fetch
-            "otag:cycle-rav-bounceland",  # Bouncelands
-            'is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) o:"may pay 3 life"',
-            (
-                "is:mdfc t:land (t:instant or t:sorcery or t:enchantment or t:creature or t:artifact) "
-                'o:"This land enters tapped."'
-            ),
+            "otag:cycle-ala-panorama",  # Basic tri fetches, tap for add {C}, cost {1} to fetch
+            "otag:cycle-rav-bounceland",  # Bouncelands, enter tapped, add one of each
+            'is:mdfc t:land -produces:m o:"may pay 3 life"',  # MDFC lands that can enter untapped for 3 life
+            'is:mdfc t:land -produces:m o:"This land enters tapped."',  # MDFC lands that always enter tapped
         ],
     )
     parser.add_argument(
@@ -130,7 +130,7 @@ def parse_arguments() -> argparse.Namespace:
         help="Disable specific lands (exact names)",
     )
     parser.add_argument("--allow_off_color_lands", action="store_true", help="Allow off-color lands")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Make colors uppercase and check for duplicates, validate that colors are valid (WUBRGC).
     if len(args.colors.casefold()) != len(set(args.colors.casefold())):
@@ -305,6 +305,7 @@ def _filter_candidates(
     """Load, filter, and reconcile enabled and disabled land candidates."""
     enabled_groups_cards = populate_cards_from_groups(args.enable_groups, args.price_source)
     disabled_groups_cards = populate_cards_from_groups(args.disable_groups, args.price_source)
+    disabled_group_names = {card["name"].casefold() for cards in disabled_groups_cards.values() for card in cards}
     enabled_specific_lands_cards = populate_cards_from_names(args.enable_specific_lands, args.price_source)
     disabled_specific_lands_cards = populate_cards_from_names(args.disable_specific_lands, args.price_source)
 
@@ -315,14 +316,6 @@ def _filter_candidates(
             group=group,
         )
         for group, cards in enabled_groups_cards.items()
-    }
-    disabled_groups_cards = {
-        group: process_cards(
-            cards,
-            config,
-            group=group,
-        )
-        for group, cards in disabled_groups_cards.items()
     }
     enabled_specific_lands_cards = process_cards(
         enabled_specific_lands_cards,
@@ -335,9 +328,11 @@ def _filter_candidates(
         group="",
     )
 
-    enabled_groups_cards = {group: cards for group, cards in enabled_groups_cards.items() if cards}
-    disabled_groups_cards = {group: cards for group, cards in disabled_groups_cards.items() if cards}
-    groups_cards = {group: cards for group, cards in enabled_groups_cards.items() if group not in disabled_groups_cards}
+    groups_cards = {
+        group: {name: price for name, price in cards.items() if name.casefold() not in disabled_group_names}
+        for group, cards in enabled_groups_cards.items()
+    }
+    groups_cards = {group: cards for group, cards in groups_cards.items() if cards}
     specific_lands_cards = {
         card: price for card, price in enabled_specific_lands_cards.items() if card not in disabled_specific_lands_cards
     }
@@ -396,8 +391,8 @@ def _print_mana_base(lands: list[str], total_price: float) -> None:
         print(f"{count} {land}")
 
 
-def main() -> None:
-    args = parse_arguments()
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_arguments(argv)
     config = CardFilterConfig(
         colors=args.colors,
         price_source=args.price_source,
