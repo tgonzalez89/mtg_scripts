@@ -15,7 +15,7 @@ name = "mtg-scripts"
 version = "1.0.0"
 description = "Command-line and graphical tools for Magic: The Gathering workflows."
 authors = [
-    { name = "Tomas Gonzalez Aragon", email = "tomas.gonz.arg@gmail.com" },
+  { name = "Tomas Gonzalez Aragon", email = "tomas.gonz.arg@gmail.com" },
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -26,17 +26,17 @@ requires-python = ">=3.14"
 # ---------------------------------------------------------------------------
 
 dependencies = [
-    "curl-cffi",
-    "numpy",
-    "opencv-python",
-    "pillow",
-    "pyautogui",
-    "pyedhrec",
-    "pywinauto",
-    "python-docx",
-    "requests",
-    "selenium",
-    "wakepy",
+  "curl-cffi",
+  "numpy",
+  "opencv-python",
+  "pillow",
+  "pyautogui",
+  "pyedhrec",
+  "pywinauto",
+  "python-docx",
+  "requests",
+  "selenium",
+  "wakepy",
 ]
 
 [project.optional-dependencies]
@@ -46,11 +46,11 @@ forge = ["tesserocr"]
 # These are not published as installable extras for downstream users.
 [dependency-groups]
 dev = [
-    "pre-commit>=4.2",
-    "pytest>=8.3",
-    "pytest-cov>=6.1",
-    "ruff>=0.16.8",
-    "ty>=0.0.1a8",
+  "pre-commit>=4.2",
+  "pytest>=8.3",
+  "pytest-cov>=6.1",
+  "ruff>=0.16.8",
+  "ty>=0.0.1a8",
 ]
 
 # Local wheel directory for packages that have no PyPI build for Windows
@@ -77,7 +77,6 @@ gen_dummy_test_files = "mtg_scripts.cli:gen_dummy_test_files"
 cardtrader_optimizer = "mtg_scripts.cli:cardtrader_optimizer"
 deck_exporter = "mtg_scripts.cli:deck_exporter"
 forge_auto_battler = "mtg_scripts.cli:forge_auto_battler"
-moxfield_to_forge = "mtg_scripts.cli:moxfield_to_forge"
 mana_base_creator = "mtg_scripts.cli:mana_base_creator"
 mana_base_recipe = "mtg_scripts.cli:mana_base_recipe"
 count_occurrences = "mtg_scripts.cli:count_occurrences"
@@ -100,30 +99,30 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "COM812", # Absense of trailing comma is OK since formatter automatically adds them when needed.
-    "CPY001", # Allow files to not have a copyright statement. Remove this if your organization requires them.
-    "D1",     # Ignore docstring rules related to public modules, classes, methods, functions, etc.
-    "D203",   # Conflicts with D211.
-    "D213",   # Conflicts with D212.
-    "ERA001", # Allow commented-out code.
-    "FIX002", # Allow TODO comments without requiring immediate resolution.
-    "S311",   # Allow `random` module usage for non-cryptographic purposes.
-    "T201",   # Allow print statements. They are used in the CLI and for debugging.
-    "TD",     # Allow TODO format/link/author variations globally.
+  "COM812", # Absense of trailing comma is OK since formatter automatically adds them when needed.
+  "CPY001", # Allow files to not have a copyright statement. Remove this if your organization requires them.
+  "D1",     # Ignore docstring rules related to public modules, classes, methods, functions, etc.
+  "D203",   # Conflicts with D211.
+  "D213",   # Conflicts with D212.
+  "ERA001", # Allow commented-out code.
+  "FIX002", # Allow TODO comments without requiring immediate resolution.
+  "S311",   # Allow `random` module usage for non-cryptographic purposes.
+  "T201",   # Allow print statements. They are used in the CLI and for debugging.
+  "TD",     # Allow TODO format/link/author variations globally.
 ]
 fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
-    "ARG001",  # Allow unused arguments in functions (e.g., fixtures).
-    "ARG002",  # Allow unused arguments in methods (e.g., fixtures).
-    "ARG005",  # Allow unused arguments in class methods (e.g., fixtures).
-    "D1",      # Ignore docstring rules related to public modules, classes, methods, functions, etc.
-    "INP001",  # Tests don't need to be part of a package.
-    "PLR2004", # Magic values are often fine in tests.
-    "SLF001",  # Tests often need access to private members.
-    "S101",    # Plain assert is standard Pytest style.
+  "ARG001",  # Allow unused arguments in functions (e.g., fixtures).
+  "ARG002",  # Allow unused arguments in methods (e.g., fixtures).
+  "ARG005",  # Allow unused arguments in class methods (e.g., fixtures).
+  "D1",      # Ignore docstring rules related to public modules, classes, methods, functions, etc.
+  "INP001",  # Tests don't need to be part of a package.
+  "PLR2004", # Magic values are often fine in tests.
+  "SLF001",  # Tests often need access to private members.
+  "S101",    # Plain assert is standard Pytest style.
 ]
 
 [tool.ruff.lint.isort]

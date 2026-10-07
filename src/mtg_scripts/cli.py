@@ -54,11 +54,6 @@ def forge_auto_battler() -> None:
     _run("mtg_scripts.forge_auto_battler.forge_auto_battler")
 
 
-def moxfield_to_forge() -> None:
-    """Run the Moxfield-to-Forge exporter."""
-    _run("mtg_scripts.forge_deck_exporter.moxfield_to_forge")
-
-
 def mana_base_creator() -> None:
     """Run the mana-base creator."""
     _run("mtg_scripts.mana_base_creator.mana_base_creator")
