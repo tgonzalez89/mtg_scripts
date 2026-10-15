@@ -75,6 +75,7 @@ desktop.ini
 *.csv
 *.html
 *.json
+!.vscode/*.json
 *.txt
 debug*.png
 decks/
