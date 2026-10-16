@@ -1,9 +1,9 @@
 import contextlib
 import tkinter as tk
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from tkinter import ttk
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast, override
 
 from PIL import Image
 
@@ -116,12 +116,13 @@ class CardGrid(ttk.Frame):
         self._pending_image_loads = 0
         self._configured_columns = 0
 
+    @override
     def destroy(self) -> None:
         self._closed = True
         self._ui.stop()
         self._cancel_refine()
         self.scrollable.on_viewport_change = None
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.executor.shutdown(wait=True, cancel_futures=True)
         self.clear()
         # `_root`/`_unbind` are private tkinter internals that are not part of
         # the `tkinter.Misc` stub, so they are accessed via an `Any` cast.
@@ -136,6 +137,10 @@ class CardGrid(ttk.Frame):
 
     def set_backend(self, backend: CardBackend) -> None:
         self.backend = backend
+
+    def wait_for_workers(self) -> None:
+        """Wait until current grid jobs stop using their backend."""
+        wait(tuple(self._tasks))
 
     # -- population ---------------------------------------------------------
 
@@ -395,10 +400,13 @@ class CardGrid(ttk.Frame):
         self._schedule_reflow()
 
     def _is_inside(self, widget: tk.Misc | None) -> bool:
-        while widget:
+        while widget is not None:
             if widget == self.scrollable:
                 return True
-            widget = getattr(widget, "master", None)
+            parent = getattr(widget, "master", None)
+            if parent is not None and not isinstance(parent, tk.Misc):
+                return False
+            widget = parent
         return False
 
     def _scroll(self, event: tk.Event[tk.Misc]) -> str | None:

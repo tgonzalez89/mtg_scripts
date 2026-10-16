@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from mtg_scripts.print_picker import scryfall_store
 from mtg_scripts.print_picker.models import CardPrint, PrintQuery
 from mtg_scripts.print_picker.scryfall_backend import ScryfallBackend
-from mtg_scripts.print_picker.scryfall_store import CardStore
+from mtg_scripts.services.scryfall import store as scryfall_store
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mtg_scripts.services.scryfall import ScryfallService
 
 ORACLE_URI = "https://data.scryfall.io/oracle-cards/oracle-v1.jsonl.gz"
 DEFAULT_URI = "https://data.scryfall.io/default-cards/default-v1.jsonl.gz"
@@ -42,9 +43,9 @@ def _backend(tmp_path: Path, cards: list[dict[str, Any]]) -> ScryfallBackend:
         "oracle_cards": {"jsonl_download_uri": ORACLE_URI},
         "default_cards": {"jsonl_download_uri": DEFAULT_URI},
     }
-    (backend.bulk_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (backend.service.bulk_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     version = backend._cache_name(f"{ORACLE_URI}\n{DEFAULT_URI}")[:16]
-    scryfall_store.build_from_cards(scryfall_store.store_path(backend.bulk_dir, version), cards)
+    scryfall_store.build_from_cards(scryfall_store.store_path(backend.service.bulk_dir, version), cards)
     return backend
 
 
@@ -57,6 +58,24 @@ def _resolved(backend: ScryfallBackend, line: str) -> CardPrint:
     card = _resolve(backend, line)
     assert card is not None, line
     return card
+
+
+def test_backend_close_does_not_close_a_borrowed_scryfall_service(tmp_path: Path) -> None:
+    class BorrowedService:
+        bulk_dir = tmp_path / "bulk"
+        metadata_cache_dir = tmp_path / "metadata"
+        bulk_metadata_cache = object()
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    service = BorrowedService()
+    backend = ScryfallBackend(cache_dir=tmp_path, service=cast("ScryfallService", service))
+
+    backend.close()
+
+    assert not service.closed
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +510,7 @@ def test_store_is_reused_across_backend_instances(tmp_path: Path) -> None:
 
 def test_store_rejects_writes(tmp_path: Path) -> None:
     backend = _backend(tmp_path, [_card(id="m12")])
-    store = backend._card_store()
+    store = backend.service.store
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         store._connection.execute("DELETE FROM prints")
     backend.close()
@@ -500,26 +519,27 @@ def test_store_rejects_writes(tmp_path: Path) -> None:
 def test_closing_the_backend_releases_the_store(tmp_path: Path) -> None:
     backend = _backend(tmp_path, [_card(id="m12")])
     assert _resolve(backend, "1 Llanowar Elves") is not None
-    assert backend._store is not None
+    store = backend.service.store
     backend.close()
-    assert backend._store is None
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        store.metadata_value("schema_version")
 
 
-def test_superseded_artifacts_are_discarded(tmp_path: Path) -> None:
+def test_superseded_generations_and_bulk_sources_are_retained(tmp_path: Path) -> None:
     backend = _backend(tmp_path, [_card(id="m12")])
-    legacy_pickle = backend.bulk_dir / "cards-deadbeef-v2.pickle"
+    bulk_dir = backend.service.bulk_dir
+    legacy_pickle = bulk_dir / "cards-deadbeef-v2.pickle"
     legacy_pickle.write_bytes(b"obsolete")
-    stale_store = backend.bulk_dir / "cards-deadbeef-v3.db"
+    stale_store = bulk_dir / "cards-deadbeef-v3.db"
     stale_store.write_bytes(b"obsolete")
-    bulk_source = backend.bulk_dir / "default_cards-deadbeef.jsonl.gz"
+    bulk_source = bulk_dir / "default_cards-deadbeef.jsonl.gz"
     bulk_source.write_bytes(b"obsolete")
 
     store = backend._card_store()
 
-    assert not legacy_pickle.exists()
-    assert not stale_store.exists()
-    # The store supersedes the compressed sources it was built from.
-    assert not bulk_source.exists()
+    assert legacy_pickle.exists()
+    assert stale_store.exists()
+    assert bulk_source.exists()
     assert store.path.exists()
     backend.close()
 
@@ -535,7 +555,7 @@ def test_store_round_trips_every_field(tmp_path: Path) -> None:
     )
     path = tmp_path / "cards.db"
     scryfall_store.build_from_cards(path, [card])
-    store = CardStore(path)
+    store = scryfall_store.CardStore(path)
     [match] = store.by_name(["Llanowar Elves"])["llanowar elves"]
     stored = match.card
     assert stored.print_id == "round-trip"
@@ -547,7 +567,6 @@ def test_store_round_trips_every_field(tmp_path: Path) -> None:
     assert stored.finishes == frozenset({"nonfoil", "foil"})
     assert stored.is_default_print is True
     assert stored.is_token is False
-    assert stored.backend == "scryfall"
     store.close()
 
 

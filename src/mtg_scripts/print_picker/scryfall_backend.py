@@ -1,13 +1,12 @@
-import json
 import re
-import threading
-import time
-from typing import TYPE_CHECKING, Final, TypedDict, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final, override
 
-from . import scryfall_store
-from .card_backend import CardBackend, ProgressCallback
-from .models import CardPrint, DeckEntry, PrintQuery, Resolution, matches_set_code
-from .scryfall_store import CardStore, NameMatch, ScryfallPrint
+from mtg_scripts.services.scryfall import ScryfallService
+from mtg_scripts.services.scryfall.store import normalize_name
+
+from .card_backend import CardBackend
+from .models import CardFace, CardPrint, DeckEntry, PrintQuery, Resolution, matches_set_code
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -15,9 +14,9 @@ if TYPE_CHECKING:
 
     import requests
 
-SCRYFALL_BULK_DATA_URL: Final[str] = "https://api.scryfall.com/bulk-data"
-SCRYFALL_BULK_TYPES: Final[tuple[str, str]] = ("oracle_cards", "default_cards")
-SCRYFALL_BULK_METADATA_MAX_AGE: Final[int] = 24 * 60 * 60
+    from mtg_scripts.services.scryfall.models import ProgressCallback, ScryfallCard, ScryfallNameMatch
+    from mtg_scripts.services.scryfall.store import CardStore
+
 USER_AGENT: Final[str] = "mtg-print-picker/1.0 (contact: local)"
 
 # Scryfall's own vocabulary, deliberately kept out of the shared model.
@@ -36,37 +35,66 @@ NONPLAYABLE_SET_TYPES: Final[frozenset[str]] = frozenset({"memorabilia", "token"
 PAPER: Final[str] = "paper"
 
 
-class _ScryfallBulkDataEntry(TypedDict, total=False):
-    """Fields used from a Scryfall `/bulk-data` entry."""
+@dataclass(frozen=True, slots=True)
+class ScryfallPrint(CardPrint):
+    set_type: str = ""
+    games: frozenset[str] = frozenset()
+    finishes: frozenset[str] = frozenset()
+    is_default_print: bool = False
+    is_token: bool = False
 
-    type: str
-    jsonl_download_uri: str
-    updated_at: str
+
+@dataclass(frozen=True, slots=True)
+class NameMatch:
+    kind: int
+    card: ScryfallPrint
 
 
-class _ScryfallBulkDataResponse(TypedDict, total=False):
-    """Shape of the Scryfall `/bulk-data` list response."""
-
-    data: list[_ScryfallBulkDataEntry]
+def to_print(card: ScryfallCard) -> ScryfallPrint:
+    return ScryfallPrint(
+        backend="scryfall",
+        print_id=card.print_id,
+        card_key=card.oracle_id,
+        name=card.name,
+        set_code=card.set_code,
+        set_name=card.set_name,
+        set_type=card.set_type,
+        games=card.games,
+        collector_number=card.collector_number,
+        released_on=card.released_on,
+        finishes=card.finishes,
+        faces=tuple(
+            CardFace(name=face.name, image_url=face.image_url, image_url_hq=face.image_url_hq) for face in card.faces
+        ),
+        is_default_print=card.is_default_print,
+        is_token=card.is_token,
+    )
 
 
 class ScryfallBackend(CardBackend):
     supports_progress = True
+    cache_provider = "scryfall"
 
-    def __init__(self, cache_dir: str | Path | None = None, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        cache_dir: str | Path | None = None,
+        session: requests.Session | None = None,
+        *,
+        service: ScryfallService | None = None,
+    ) -> None:
         super().__init__(cache_dir, session)
-        self.bulk_dir = self.json_cache_dir.parent / "bulk"
-        self.bulk_dir.mkdir(parents=True, exist_ok=True)
-        self._store_lock = threading.Lock()
-        self._store: CardStore | None = None
+        self._owns_service = service is None
+        self.service = service or ScryfallService(cache_dir=cache_dir, http_client=self.http)
 
     @property
+    @override
     def user_agent(self) -> str:
         return USER_AGENT
 
     # -- import parsing -----------------------------------------------------
 
     @staticmethod
+    @override
     def parse_line(line: str) -> DeckEntry:
         quantity_match = re.match(r"^(\d+)\s+(.+)$", line.strip())
         quantity = int(quantity_match.group(1)) if quantity_match else 1
@@ -98,6 +126,7 @@ class ScryfallBackend(CardBackend):
         )
 
     @staticmethod
+    @override
     def export_card_text(card: CardPrint, entry: DeckEntry) -> str:
         """Format as `Name (set) 123`, with a trailing `*F*` for foils."""
         raw_number = card.collector_number
@@ -115,6 +144,7 @@ class ScryfallBackend(CardBackend):
 
     # -- resolution ---------------------------------------------------------
 
+    @override
     def resolve(self, entries: Sequence[DeckEntry], progress: ProgressCallback | None = None) -> list[Resolution]:
         if not entries:
             return []
@@ -135,7 +165,12 @@ class ScryfallBackend(CardBackend):
         pending: dict[int, DeckEntry] = {}
         for index, resolution in enumerate(resolutions):
             query = resolution.entry.query
-            if resolution.card is None and query.collector_number and not query.set_code:
+            if (
+                resolution.card is None
+                and query.collector_number is not None
+                and query.collector_number != ""
+                and query.set_code in (None, "")
+            ):
                 pending[index] = DeckEntry(
                     quantity=resolution.entry.quantity,
                     name=f"{resolution.entry.name} {query.collector_number}",
@@ -149,8 +184,11 @@ class ScryfallBackend(CardBackend):
             if card is not None:
                 resolutions[index] = Resolution(entry=entry, card=card)
 
-    def _select(self, candidates: dict[str, list[NameMatch]], entry: DeckEntry) -> ScryfallPrint | None:
-        matches = candidates.get(scryfall_store.normalize_name(entry.name), [])
+    def _select(self, candidates: dict[str, list[ScryfallNameMatch]], entry: DeckEntry) -> ScryfallPrint | None:
+        matches = [
+            NameMatch(kind=match.kind, card=to_print(match.card))
+            for match in candidates.get(normalize_name(entry.name), [])
+        ]
         if not entry.query:
             return _select_by_name_only(matches)
         # An explicit set or number already pins the printing, so every match
@@ -167,105 +205,29 @@ class ScryfallBackend(CardBackend):
         nonfoil_matches = [card for card in identity_matches if NONFOIL in card.finishes]
         return _best(nonfoil_matches or identity_matches)
 
+    @override
     def printings_of(self, card: CardPrint, progress: ProgressCallback | None = None) -> Sequence[CardPrint]:
-        return self._card_store(progress).printings_of(card.card_key)
+        return tuple(to_print(printing) for printing in self._card_store(progress).printings_of(card.card_key))
 
     # -- store lifecycle ----------------------------------------------------
 
-    def _card_store(self, progress: ProgressCallback | None = None) -> CardStore:
-        with self._store_lock:
-            if self._store is not None:
-                return self._store
+    def _card_store(self, progress: ProgressCallback | None = None, *, force_refresh: bool = False) -> CardStore:
+        return self.service.get_store(progress, force_refresh=force_refresh)
 
-            metadata = self._load_bulk_metadata()
-            download_uris = [str(metadata[bulk_type]["jsonl_download_uri"]) for bulk_type in SCRYFALL_BULK_TYPES]
-            version = self._cache_name("\n".join(download_uris))[:16]
-            path = scryfall_store.store_path(self.bulk_dir, version)
-            if not path.exists():
-                self._build_store(path, download_uris, progress)
-            scryfall_store.discard_superseded(self.bulk_dir, keep=path)
-            self._store = CardStore(path)
-            return self._store
-
-    def _build_store(self, path: Path, download_uris: list[str], progress: ProgressCallback | None) -> None:
-        bulk_paths: list[Path] = []
-        for bulk_type, download_uri in zip(SCRYFALL_BULK_TYPES, download_uris, strict=True):
-            bulk_version = self._cache_name(download_uri)[:16]
-            bulk_path = self.bulk_dir / f"{bulk_type}-{bulk_version}.jsonl.gz"
-            if not bulk_path.exists():
-                self._download_bulk_file(download_uri, bulk_path, progress)
-            bulk_paths.append(bulk_path)
-        _report_progress(progress, "Building card database...", 0, 0)
-        scryfall_store.build(path, bulk_paths[0], bulk_paths[1])
-
+    @override
     def close(self) -> None:
-        with self._store_lock:
-            if self._store is not None:
-                self._store.close()
-                self._store = None
+        if self._owns_service:
+            self.service.close()
         super().close()
 
+    @override
     def clear_json_cache(self) -> None:
         super().clear_json_cache()
-        with self._store_lock:
-            if self._store is not None:
-                self._store.close()
-                self._store = None
-            for bulk_file in self.bulk_dir.iterdir():
-                if bulk_file.is_file():
-                    bulk_file.unlink()
+        self.service.clear_search_cache()
 
-    # -- bulk data ----------------------------------------------------------
-
-    def _load_bulk_metadata(self) -> dict[str, _ScryfallBulkDataEntry]:
-        metadata_path = self.bulk_dir / "metadata.json"
-        metadata_is_current = metadata_path.exists() and (
-            time.time() - metadata_path.stat().st_mtime < SCRYFALL_BULK_METADATA_MAX_AGE
-        )
-        if metadata_is_current:
-            with metadata_path.open("r", encoding="utf-8") as metadata_file:
-                metadata: dict[str, _ScryfallBulkDataEntry] = json.load(metadata_file)
-            if all(bulk_type in metadata for bulk_type in SCRYFALL_BULK_TYPES):
-                return metadata
-
-        response = self.session.get(SCRYFALL_BULK_DATA_URL, timeout=20)
-        response.raise_for_status()
-        bulk_data_response = cast("_ScryfallBulkDataResponse", response.json())
-        metadata = {entry["type"]: entry for entry in bulk_data_response.get("data", [])}
-        missing_types = [bulk_type for bulk_type in SCRYFALL_BULK_TYPES if bulk_type not in metadata]
-        if missing_types:
-            msg = f"Scryfall bulk data is missing: {', '.join(missing_types)}"
-            raise ValueError(msg)
-        with metadata_path.open("w", encoding="utf-8") as metadata_file:
-            json.dump(metadata, metadata_file)
-        return metadata
-
-    def _download_bulk_file(self, url: str, destination: Path, progress: ProgressCallback | None = None) -> None:
-        temporary_path = destination.with_suffix(destination.suffix + ".tmp")
-        response = self.session.get(url, timeout=120, stream=True)
-        response.raise_for_status()
-        label = f"Downloading {destination.stem}..."
-        try:
-            total = int(response.headers.get("content-length", 0)) if hasattr(response, "headers") else 0
-            downloaded = 0
-            _report_progress(progress, label, downloaded, total)
-            with temporary_path.open("wb") as output_file:
-                if hasattr(response, "iter_content"):
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            output_file.write(chunk)
-                            downloaded += len(chunk)
-                            _report_progress(progress, label, downloaded, total)
-                else:
-                    output_file.write(response.content)
-                    _report_progress(progress, label, len(response.content), total)
-            temporary_path.replace(destination)
-        finally:
-            close = getattr(response, "close", None)
-            if close:
-                close()
-            if temporary_path.exists():
-                temporary_path.unlink()
+    def refresh_database(self, progress: ProgressCallback | None = None) -> CardStore:
+        """Refresh Scryfall metadata and publish a new store generation if available."""
+        return self.service.refresh_bulk(progress)
 
 
 def _select_by_name_only(matches: list[NameMatch]) -> ScryfallPrint | None:
@@ -297,7 +259,7 @@ def _matches_identity(card: ScryfallPrint, query: PrintQuery) -> bool:
     """Return whether a printing matches the set and number the line asked for."""
     if not matches_set_code(card, query):
         return False
-    if not query.collector_number:
+    if query.collector_number is None or query.collector_number == "":
         return True
     actual = card.collector_number.casefold()
     requested = query.collector_number.casefold()

@@ -154,7 +154,7 @@ def _process_memory() -> int:
     process_handle = kernel32.GetCurrentProcess()
     if not psapi.GetProcessMemoryInfo(process_handle, ctypes.byref(counters), counters.cb):
         return 0
-    return counters.WorkingSetSize
+    return int(counters.WorkingSetSize)
 
 
 def _snapshot(label: str) -> dict[str, int | str | float]:
@@ -226,6 +226,11 @@ def _open_and_close_chooser(app: App, slot: CardSlot) -> dict[str, int | float]:
     }
 
 
+@pytest.mark.network
+@pytest.mark.gui
+@pytest.mark.windows
+@pytest.mark.memory
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-memory integration test")
 @pytest.mark.skipif(os.getenv("RUN_PRINT_PICKER_MEMORY_TESTS") != "1", reason="opt-in integration memory test")
 def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
     app = App()
@@ -235,7 +240,7 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
         _import_text(app, app.backend, MAGIC_DECK)
         _snapshot("magic_import")
         scryfall_backend = cast("ScryfallBackend", app.backend)
-        assert scryfall_backend._store is not None
+        assert scryfall_backend.service.store.path.is_file()
 
         single_slot = next(slot for slot in app.slots if _has_single_printing(scryfall_backend, slot))
         # Released here so it cannot keep the backend alive past the swap below.
@@ -249,7 +254,7 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
 
         _import_text(app, app.backend, "1 Sol Ring")
         _snapshot("sol_ring_import")
-        assert cast("ScryfallBackend", app.backend)._store is not None
+        assert cast("ScryfallBackend", app.backend).service.store.path.is_file()
 
         old_backend = app.backend
         old_backend.close()

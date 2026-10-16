@@ -1,9 +1,24 @@
 """Run the mana-base creator with a named budget and land theme."""
 
+from __future__ import annotations
+
 import argparse
 import shlex
+from typing import TYPE_CHECKING
 
-from mtg_scripts.mana_base_creator.mana_base_creator import main as run_creator
+from mtg_scripts.mana_base_creator.mana_base_creator import (
+    creator_config_from_namespace,
+)
+from mtg_scripts.mana_base_creator.mana_base_creator import (
+    parse_arguments as parse_creator_arguments,
+)
+from mtg_scripts.mana_base_creator.mana_base_creator import (
+    run_creator_config as run_creator,
+)
+from mtg_scripts.mana_base_creator.models import CreatorConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 BUDGETS = {
     "ultra-low": (10, 1),
@@ -161,7 +176,7 @@ THEMES = {
 }
 
 
-def parse_arguments() -> tuple[argparse.Namespace, list[str]]:
+def parse_arguments(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Create a Commander mana base using a named budget and land theme.")
     parser.add_argument("budget", choices=BUDGETS)
     parser.add_argument("theme", choices=THEMES)
@@ -169,40 +184,56 @@ def parse_arguments() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("total_lands", type=int)
     parser.add_argument("min_basics", type=int)
     parser.add_argument("price_source", choices=["usd", "eur", "tix"])
-    return parser.parse_known_args()
+    return parser.parse_known_args(argv)
 
 
-def main() -> None:
-    args, extra_options = parse_arguments()
+def main(argv: Sequence[str] | None = None) -> int:
+    args, extra_options = parse_arguments(argv)
     budget, max_price = BUDGETS[args.budget]
     groups, lands = THEMES[args.theme]
 
+    preset = CreatorConfig(
+        colors=args.colors.casefold(),
+        total_lands=args.total_lands,
+        min_basics=args.min_basics,
+        budget=float(budget),
+        max_price_group_average=float(max_price),
+        max_price_specific_lands=float(max_price),
+        price_source=args.price_source,
+        enable_groups=tuple(groups),
+        disable_groups=(),
+        enable_specific_lands=tuple(lands),
+        disable_specific_lands=(),
+        allow_off_color_lands=False,
+        allow_stale_data=False,
+    )
     creator_args = [
         "--colors",
         args.colors,
-        "--total_lands",
+        "--total-lands",
         str(args.total_lands),
-        "--min_basics",
+        "--min-basics",
         str(args.min_basics),
         "--budget",
         str(budget),
-        "--max_price_group_average",
+        "--max-price-group-average",
         str(max_price),
-        "--max_price_specific_lands",
+        "--max-price-specific-lands",
         str(max_price),
-        "--price_source",
+        "--price-source",
         args.price_source,
-        "--enable_groups",
+        "--enable-groups",
         *groups,
-        "--enable_specific_lands",
+        "--enable-specific-lands",
         *lands,
         *extra_options,
     ]
 
     print("Running creator with arguments:")
     print(shlex.join(creator_args), flush=True)
-    run_creator(creator_args)
+    creator_options = creator_config_from_namespace(parse_creator_arguments(extra_options, defaults=preset))
+    return run_creator(creator_options)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

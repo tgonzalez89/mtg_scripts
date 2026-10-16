@@ -1,17 +1,18 @@
+from __future__ import annotations
+
 import argparse
-import json
 import random
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, TypedDict
+from typing import TYPE_CHECKING, Final
 
+from mtg_scripts.common.json_io import write_json
 
-class OfferRecord(TypedDict):
-    total_price: float
-    price: float
-    shipping_price: float
-    amount: int
-    seller: str
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from .models import OfferRecord
 
 
 MAX_GENERATED_VALUE: Final = 1000
@@ -58,8 +59,7 @@ def generate_data(config: GenerationConfig) -> None:
         for i in range(config.num_sellers)
     }
 
-    with Path(config.sellers_database_path).open("w", encoding="utf-8") as f:
-        json.dump(sellers_db, f, indent=2, sort_keys=True)
+    write_json(Path(config.sellers_database_path), sellers_db)
 
     # Generate offers_db
     offers_db: dict[str, list[OfferRecord]] = {}
@@ -88,14 +88,13 @@ def generate_data(config: GenerationConfig) -> None:
         card_amount = random.randint(config.buy_list_min_card_amount, config.buy_list_max_card_amount)
         buy_list[card_name] = card_amount
 
-    with Path(config.offers_database_path).open("w", encoding="utf-8") as f:
-        json.dump(offers_db, f, indent=2, sort_keys=True)
+    write_json(Path(config.offers_database_path), offers_db)
 
     with Path(config.card_list_path).open("w", encoding="utf-8") as f:
         f.writelines(f"{amount} {card_name}\n" for card_name, amount in buy_list.items())
 
 
-if __name__ == "__main__":
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-sellers", type=int, required=True)
     parser.add_argument("--seller-min-shipping-price", type=float, required=True)
@@ -128,24 +127,32 @@ if __name__ == "__main__":
         help="Path to input offers database file (default offers_database.json).",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    generate_data(
-        GenerationConfig(
-            num_sellers=args.num_sellers,
-            seller_min_shipping_price=args.seller_min_shipping_price,
-            seller_max_shipping_price=args.seller_max_shipping_price,
-            offer_min_price=args.offer_min_price,
-            offer_max_price=args.offer_max_price,
-            offer_min_amount=args.offer_min_amount,
-            offer_max_amount=args.offer_max_amount,
-            num_cards=args.num_cards,
-            card_min_offers=args.card_min_offers,
-            card_max_offers=args.card_max_offers,
-            buy_list_min_card_amount=args.buy_list_min_card_amount,
-            buy_list_max_card_amount=args.buy_list_max_card_amount,
-            card_list_path=args.card_list,
-            sellers_database_path=args.sellers_database,
-            offers_database_path=args.offers_database,
-        )
+    config = GenerationConfig(
+        num_sellers=args.num_sellers,
+        seller_min_shipping_price=args.seller_min_shipping_price,
+        seller_max_shipping_price=args.seller_max_shipping_price,
+        offer_min_price=args.offer_min_price,
+        offer_max_price=args.offer_max_price,
+        offer_min_amount=args.offer_min_amount,
+        offer_max_amount=args.offer_max_amount,
+        num_cards=args.num_cards,
+        card_min_offers=args.card_min_offers,
+        card_max_offers=args.card_max_offers,
+        buy_list_min_card_amount=args.buy_list_min_card_amount,
+        buy_list_max_card_amount=args.buy_list_max_card_amount,
+        card_list_path=args.card_list,
+        sellers_database_path=args.sellers_database,
+        offers_database_path=args.offers_database,
     )
+    try:
+        generate_data(config)
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

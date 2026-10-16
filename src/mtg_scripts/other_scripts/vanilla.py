@@ -9,26 +9,19 @@ column showing the power-to-mana-value ratio as a float.
 from __future__ import annotations
 
 import argparse
-import urllib.parse
+import sys
 from pathlib import Path
-from typing import Any, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Final, TypedDict
 
-import requests
+from mtg_scripts.services.scryfall import ScryfallService
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mtg_scripts.services.scryfall.models import ScryfallCard
 
 DEFAULT_QUERY: Final = "type:creature commander:wg (game:paper) is:vanilla"
-DEFAULT_OUTPUT: Final = Path(__file__).with_name("vanilla_creatures.txt")
-
-
-class ScryfallCard(TypedDict, total=False):
-    """Subset of the Scryfall card fields this script reads."""
-
-    name: str
-    type_line: str
-    mana_value: float | int | str
-    cmc: float
-    mana_cost: str
-    power: str
-    toughness: str
+DEFAULT_OUTPUT: Final = Path("vanilla_creatures.txt")
 
 
 class RankedCard(TypedDict):
@@ -42,49 +35,17 @@ class RankedCard(TypedDict):
     efficiency: float
 
 
-def fetch_scryfall_cards(query: str = DEFAULT_QUERY) -> list[ScryfallCard]:
+def fetch_scryfall_cards(query: str = DEFAULT_QUERY, service: ScryfallService | None = None) -> list[ScryfallCard]:
     """Fetch all cards returned by a Scryfall search query."""
-    cards: list[ScryfallCard] = []
-    page = 1
-
-    while True:
-        params: dict[str, str | int] = {
-            "q": query,
-            "page": page,
-            "order": "cmc",
-            "dir": "asc",
-        }
-        url = "https://api.scryfall.com/cards/search"
-        response = requests.get(
-            url,
-            params=params,
-            headers={"User-Agent": "mtg-scripts/vanilla"},
-            timeout=30,
-        )
-        response.raise_for_status()
-        # Scryfall's JSON payload shape beyond the fields we read is dynamic/undocumented here.
-        payload: dict[str, Any] = response.json()
-
-        data = cast("list[ScryfallCard]", payload.get("data", []))
-        cards.extend(data)
-
-        if not payload.get("has_more", False):
-            break
-
-        next_page = payload.get("next_page")
-        if next_page is None:
-            break
-
-        parsed = urllib.parse.urlparse(str(next_page))
-        query_params = urllib.parse.parse_qs(parsed.query)
-        page_value = query_params.get("page", [page + 1])[0]
-        page = int(page_value)
-
-    return cards
+    if service is None:
+        with ScryfallService() as owned_service:
+            return fetch_scryfall_cards(query, owned_service)
+    result = service.search(query, order="cmc", direction="asc")
+    return list(result.cards)
 
 
 def is_vanilla_creature(card: ScryfallCard) -> bool:
-    type_line = str(card.get("type_line", "")).lower()
+    type_line = card.type_line.lower()
 
     if not type_line:
         return True
@@ -121,12 +82,9 @@ def rank_cards(
         if not is_vanilla_creature(card):
             continue
 
-        mana_value = parse_numeric_value(card.get("mana_value"))
-        if mana_value is None:
-            mana_value = parse_numeric_value(card.get("cmc"))
-
-        power = parse_numeric_value(card.get("power"))
-        toughness = parse_numeric_value(card.get("toughness"))
+        mana_value = parse_numeric_value(card.mana_value)
+        power = parse_numeric_value(card.power)
+        toughness = parse_numeric_value(card.toughness)
 
         if mana_value is None or power is None or toughness is None:
             continue
@@ -141,9 +99,9 @@ def rank_cards(
 
         ranked.append(
             RankedCard(
-                name=card.get("name", "Unknown"),
+                name=card.name,
                 mana_value=mana_value,
-                mana_cost=card.get("mana_cost", ""),
+                mana_cost=card.mana_cost,
                 power=power,
                 toughness=toughness,
                 efficiency=efficiency,
@@ -180,7 +138,7 @@ def write_output(cards: list[RankedCard], output_path: Path) -> None:
     output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch and rank vanilla creatures from Scryfall")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Scryfall search query")
     parser.add_argument(
@@ -200,15 +158,20 @@ def main() -> None:
         default=None,
         help="Only include cards with power greater than or equal to this value",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    cards = fetch_scryfall_cards(args.query)
-    ranked_cards = rank_cards(cards, min_mana_value=args.min_mana_value, min_power=args.min_power)
-    output_path = Path(args.output)
-    write_output(ranked_cards, output_path)
+    try:
+        cards = fetch_scryfall_cards(args.query)
+        ranked_cards = rank_cards(cards, min_mana_value=args.min_mana_value, min_power=args.min_power)
+        output_path = Path(args.output)
+        write_output(ranked_cards, output_path)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
     print(f"Wrote {len(ranked_cards)} cards to {output_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

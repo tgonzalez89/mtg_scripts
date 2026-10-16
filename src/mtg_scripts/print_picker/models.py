@@ -10,6 +10,7 @@ which extends `CardPrint` privately when it needs to carry more.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,7 @@ class CardPrint:
     def image_urls(self, *, high_quality: bool = False) -> tuple[str, ...]:
         """Return the image URLs to load for this printing, front face first."""
         urls = ((face.image_url_hq if high_quality else face.image_url) for face in self.faces)
-        return tuple(url for url in urls if url)
+        return tuple(url for url in urls if url is not None and url != "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,10 +116,10 @@ def _release_sort_key(released_on: str) -> float:
 
 
 def _collector_sort_key(collector_number: str) -> tuple[tuple[int, int | str], ...]:
-    parts = re.findall(r"\d+|\D+", collector_number)
+    parts = cast("list[str]", re.findall(r"\d+|\D+", collector_number))
     return tuple((0, int(part)) if part.isdigit() else (1, part.casefold()) for part in parts)
 
 
 def matches_set_code(card: CardPrint, query: PrintQuery) -> bool:
     """Return whether a printing is from the set `query` asked for, if any."""
-    return not query.set_code or card.set_code.casefold() == query.set_code.casefold()
+    return query.set_code is None or query.set_code == "" or card.set_code.casefold() == query.set_code.casefold()

@@ -1,6 +1,6 @@
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Final, TypedDict, cast, override
 from urllib.parse import quote_plus
 
 from .card_backend import CardBackend, ProgressCallback
@@ -34,6 +34,8 @@ class _RiftCodexSearchResponse(TypedDict, total=False):
 
 
 class RiftCodexBackend(CardBackend):
+    cache_provider = BACKEND_NAME
+
     def __init__(self, cache_dir: str | Path | None = None, session: requests.Session | None = None) -> None:
         super().__init__(cache_dir, session)
         # Set code -> publication date. A handful of short strings; the API has
@@ -41,9 +43,11 @@ class RiftCodexBackend(CardBackend):
         self._set_release_dates: dict[str, str] = {}
 
     @property
+    @override
     def user_agent(self) -> str:
         return USER_AGENT
 
+    @override
     def close(self) -> None:
         self._set_release_dates.clear()
         super().close()
@@ -51,6 +55,7 @@ class RiftCodexBackend(CardBackend):
     # -- import parsing -----------------------------------------------------
 
     @staticmethod
+    @override
     def parse_line(line: str) -> DeckEntry:
         quantity_match = re.match(r"^(\d+)\s+(.+)$", line.strip())
         quantity = int(quantity_match.group(1)) if quantity_match else 1
@@ -67,6 +72,7 @@ class RiftCodexBackend(CardBackend):
         return DeckEntry(quantity=quantity, name=card_text)
 
     @staticmethod
+    @override
     def export_card_text(card: CardPrint, entry: DeckEntry) -> str:
         """Format as `Name (SET-017)`, the same printing code imports use."""
         name = card.name or entry.name
@@ -76,6 +82,7 @@ class RiftCodexBackend(CardBackend):
 
     # -- resolution ---------------------------------------------------------
 
+    @override
     def resolve(self, entries: Sequence[DeckEntry], progress: ProgressCallback | None = None) -> list[Resolution]:
         _ = progress
         if not entries:
@@ -101,6 +108,7 @@ class RiftCodexBackend(CardBackend):
             card = cards[0] if cards else None
         return Resolution(entry=entry, card=card)
 
+    @override
     def printings_of(self, card: CardPrint, progress: ProgressCallback | None = None) -> Sequence[CardPrint]:
         """Return exact and fuzzy printings associated with a RiftBound card."""
         _ = progress
@@ -207,7 +215,9 @@ def _matches_identity(card: CardPrint, query: PrintQuery) -> bool:
     """
     if not matches_set_code(card, query):
         return False
-    return not query.collector_number or card.collector_number == query.collector_number
+    if query.collector_number is None or query.collector_number == "":
+        return True
+    return card.collector_number == query.collector_number
 
 
 def _base_names(items: list[dict[str, Any]]) -> set[str]:

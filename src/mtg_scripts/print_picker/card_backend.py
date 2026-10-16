@@ -8,21 +8,25 @@ in-flight requests used to coalesce duplicate concurrent work.
 import hashlib
 import io
 import json
-import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Future
+from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final, cast
 
-import requests
 from PIL import Image
 
+from mtg_scripts.common.cache import BytesDiskCache, CachePaths, JsonDiskCache, canonical_cache_key
+from mtg_scripts.common.http import JsonHttpClient
+
 if TYPE_CHECKING:
+    import requests
+
     from .models import CardPrint, DeckEntry, Resolution
 
 MAX_EXTENSION_LENGTH: Final[int] = 5
 IMAGE_LOADING_ENABLED: Final[bool] = True
+JSON_CACHE_MAX_AGE: Final[int] = 24 * 60 * 60
 
 # Arbitrary JSON returned by the card APIs; genuinely dynamic, so it is modeled
 # structurally rather than with a TypedDict.
@@ -31,23 +35,31 @@ type JSONValue = bool | int | float | str | list["JSONValue"] | dict[str, "JSONV
 type ProgressCallback = Callable[[str, int, int], None]
 
 
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 class CardBackend(ABC):
-    """Resolves import lines into immutable `CardPrint`s and loads their images."""
+    """Resolves cards and composes shared HTTP/cache services with local image decoding."""
 
     supports_progress = False
+    cache_provider = "print-picker"
 
     def __init__(self, cache_dir: str | Path | None = None, session: requests.Session | None = None) -> None:
-        root = Path(cache_dir or Path(__file__).with_name(".cache"))
-        self.json_cache_dir = root / "json"
-        self.image_cache_dir = root / "images"
-        self.json_cache_dir.mkdir(parents=True, exist_ok=True)
-        self.image_cache_dir.mkdir(parents=True, exist_ok=True)
-        self.session = session or requests.Session()
-        self.session.headers.update({"User-Agent": self.user_agent})
-        self._inflight_lock = threading.Lock()
-        # One map for every kind of in-flight work; keys are namespaced
-        # ("json:<hash>", "img:<url>") so unrelated requests cannot collide.
-        self._inflight: dict[str, Future[Any]] = {}
+        self.cache_paths = CachePaths.resolve(cache_dir)
+        self.json_cache_dir = self.cache_paths.namespace(self.cache_provider, "json")
+        self.image_cache_dir = self.cache_paths.namespace(self.cache_provider, "images")
+        self.legacy_cache_dir = Path(__file__).with_name(".cache") if cache_dir is None else None
+        self._json_disk_cache = JsonDiskCache(self.json_cache_dir, provider=self.cache_provider)
+        self._image_disk_cache = BytesDiskCache(self.image_cache_dir)
+        self.http = JsonHttpClient(
+            session=session,
+            user_agent=self.user_agent,
+            json_cache=self._json_disk_cache,
+            bytes_cache=self._image_disk_cache,
+            json_max_age=JSON_CACHE_MAX_AGE,
+        )
+        self.session = self.http.session
 
     # -- abstract surface ---------------------------------------------------
 
@@ -81,103 +93,78 @@ class CardBackend(ABC):
 
     def close(self) -> None:
         """Release every resource held by the backend."""
-        with self._inflight_lock:
-            self._inflight.clear()
-        self.session.close()
-
-    # -- request coalescing -------------------------------------------------
-
-    def _coalesce[T](self, key: str, factory: Callable[[], T]) -> T:
-        """Run `factory` once for `key`, sharing the result with concurrent callers."""
-        with self._inflight_lock:
-            pending: Future[T] | None = self._inflight.get(key)
-            future: Future[T] = pending if pending is not None else Future()
-            if pending is None:
-                self._inflight[key] = future
-        if pending is not None:
-            # Another caller owns this key; wait on its result rather than
-            # duplicating the work.
-            return future.result()
-
-        try:
-            result = factory()
-        except BaseException as error:
-            future.set_exception(error)
-            raise
-        else:
-            future.set_result(result)
-            return result
-        finally:
-            with self._inflight_lock:
-                self._inflight.pop(key, None)
+        self.http.close()
 
     # -- disk-cached requests ----------------------------------------------
 
     @staticmethod
     def _cache_name(url: str) -> str:
-        return hashlib.sha256(url.encode("utf-8")).hexdigest()
-
-    def _json_cache_path(self, cache_key: str) -> Path:
-        return self.json_cache_dir / f"{self._cache_name(cache_key)}.json"
-
-    def _image_cache_path(self, url: str) -> Path:
-        extension = Path(url.split("?", 1)[0]).suffix.lower() or ".img"
-        if len(extension) > MAX_EXTENSION_LENGTH or not extension[1:].isalnum():
-            extension = ".img"
-        return self.image_cache_dir / f"{self._cache_name(url)}{extension}"
+        """Return the stable digest used by bulk-generation filenames and legacy caches."""
+        return _sha256(url)
 
     def request_json(self, url: str) -> JSONValue:
-        return self._request_json_cached(url, lambda: self.session.get(url, timeout=20))
+        key = canonical_cache_key("GET", url)
+        if self.legacy_cache_dir is not None:
+            self._import_legacy_json(key, url)
+        return cast("JSONValue", self.http.get_json(url, max_age=JSON_CACHE_MAX_AGE))
 
     def request_json_post(self, url: str, payload: Mapping[str, str | int | float | bool | None]) -> JSONValue:
         payload_key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        cache_key = f"POST {url}\n{payload_key}"
-        return self._request_json_cached(cache_key, lambda: self.session.post(url, json=payload, timeout=20))
+        legacy_key = f"POST {url}\n{payload_key}"
+        key = canonical_cache_key("POST", url, payload=payload)
+        if self.legacy_cache_dir is not None:
+            legacy_name = _sha256(legacy_key)
+            self._json_disk_cache.import_legacy(
+                key,
+                self.legacy_cache_dir / "json" / f"{legacy_name}.json",
+                fresh_for_seconds=JSON_CACHE_MAX_AGE,
+            )
+        return cast("JSONValue", self.http.post_json(url, payload=payload))
 
-    def _request_json_cached(self, cache_key: str, request: Callable[[], requests.Response]) -> JSONValue:
-        cache_path = self._json_cache_path(cache_key)
-        if cache_path.exists():
-            return self._read_json_cache(cache_path)
-
-        def fetch() -> JSONValue:
-            if cache_path.exists():
-                return self._read_json_cache(cache_path)
-            response = request()
-            response.raise_for_status()
-            data: JSONValue = response.json()
-            with cache_path.open("w", encoding="utf-8") as cache_file:
-                json.dump(data, cache_file)
-            return data
-
-        return self._coalesce(f"json:{self._cache_name(cache_key)}", fetch)
-
-    @staticmethod
-    def _read_json_cache(cache_path: Path) -> JSONValue:
-        with cache_path.open("r", encoding="utf-8") as cache_file:
-            data: JSONValue = json.load(cache_file)
-        return data
+    def _import_legacy_json(self, key: str, request_key: str) -> None:
+        if self.legacy_cache_dir is None:
+            return
+        legacy_name = _sha256(request_key)
+        self._json_disk_cache.import_legacy(
+            key,
+            self.legacy_cache_dir / "json" / f"{legacy_name}.json",
+            fresh_for_seconds=JSON_CACHE_MAX_AGE,
+        )
 
     def get_image(self, url: str) -> Image.Image:
-        cache_path = self._image_cache_path(url)
-        if cache_path.exists():
-            return self._read_image_cache(cache_path)
-
-        def fetch() -> Image.Image:
-            if not cache_path.exists():
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                cache_path.write_bytes(response.content)
-            return self._read_image_cache(cache_path)
-
-        return self._coalesce(f"img:{url}", fetch)
-
-    @staticmethod
-    def _read_image_cache(cache_path: Path) -> Image.Image:
-        with cache_path.open("rb") as image_file:
-            image = Image.open(io.BytesIO(image_file.read())).convert("RGBA")
+        key = canonical_cache_key("GET", url, representation={"kind": "image"})
+        legacy_path = (
+            None
+            if self.legacy_cache_dir is None
+            else self.legacy_cache_dir / "images" / f"{_sha256(url)}{self._image_extension(url)}"
+        )
+        if legacy_path is not None and self._image_disk_cache.get(key) is None and legacy_path.is_file():
+            with suppress(OSError):
+                self._image_disk_cache.put_if_absent(key, legacy_path.read_bytes(), fetched_at=0)
+        image: Image.Image | None = None
+        for attempt in range(2):
+            image_bytes = self.http.get_bytes(url, representation={"kind": "image"}, rate_limiter=None)
+            try:
+                image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+            except OSError, ValueError:
+                self._image_disk_cache.discard(key)
+                if attempt == 1:
+                    raise
+                continue
+            break
+        if image is None:
+            message = "Unable to load card image."
+            raise RuntimeError(message)
         if image.width > image.height:
             image = image.rotate(90, expand=True)
         return image
+
+    @staticmethod
+    def _image_extension(url: str) -> str:
+        extension = Path(url.split("?", 1)[0]).suffix.lower() or ".img"
+        if len(extension) > MAX_EXTENSION_LENGTH or not extension[1:].isalnum():
+            return ".img"
+        return extension
 
     def load_images(self, card: CardPrint, *, high_quality: bool = False) -> tuple[Image.Image, ...]:
         """Return the loaded face images for a printing, front face first."""
@@ -200,10 +187,7 @@ class CardBackend(ABC):
     # -- cache maintenance --------------------------------------------------
 
     def clear_json_cache(self) -> None:
-        for cache_file in self.json_cache_dir.glob("*.json"):
-            cache_file.unlink()
+        self._json_disk_cache.clear()
 
     def clear_image_cache(self) -> None:
-        for cache_file in self.image_cache_dir.iterdir():
-            if cache_file.is_file():
-                cache_file.unlink()
+        self._image_disk_cache.clear()

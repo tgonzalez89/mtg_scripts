@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import messagebox
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from .card_grid import CardGrid
 from .gui_dialogs import ProgressDialog
@@ -52,13 +52,14 @@ class PrintingChooser(tk.Toplevel):
         self.card_grid.pack(fill="both", expand=True)
         self.executor.submit(self._load_printings)
 
+    @override
     def destroy(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._ui.stop()
         on_close = self.on_close
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.executor.shutdown(wait=True, cancel_futures=True)
         self.card_grid.destroy()
         self.progress_dialog = None
         self.backend = None

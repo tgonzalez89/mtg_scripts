@@ -31,6 +31,7 @@ def _backend(tmp_path: Path) -> RiftCodexBackend:
     # Release dates come from a per-set endpoint; stub it so no request is made.
     backend._set_release_dates["ogs"] = "2025-10-31T00:00:00"
     backend._set_release_dates["ogn"] = "2025-10-31T00:00:00"
+    backend._set_release_dates["opp"] = ""
     return backend
 
 

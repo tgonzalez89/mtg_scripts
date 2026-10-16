@@ -1,72 +1,67 @@
 #!/bin/env python3
 import argparse
-import hashlib
-import json
-from collections import Counter
-from collections.abc import (  # noqa: TC003 (needed at runtime: evaluated in a module-level variable annotation)
-    Mapping,
-    Sequence,
+import sys
+from collections.abc import Sequence  # noqa: TC003
+
+from mtg_scripts.services.scryfall import ScryfallService
+
+from .allocation import (
+    add_land_groups as _add_land_groups,
 )
-from contextlib import suppress
-from dataclasses import dataclass
-from pathlib import Path
-from types import MappingProxyType
-from typing import Final, NotRequired, TypedDict
-
-import requests
-
-SCRYFALL_API_URL: Final[str] = "https://api.scryfall.com/cards/search"
-SCRYFALL_HEADERS: Final[Mapping[str, str]] = MappingProxyType(
-    {"User-Agent": "MyMTGApp/1.0 (contact@example.com)", "Accept": "application/json"}
+from .allocation import (
+    add_specific_lands as _add_specific_lands,
 )
-SCRYFALL_BASE_QUERY: Final[str] = "game:paper legal:commander order:{price_source} dir:asc"
-HTTP_OK: Final[int] = 200
+from .allocation import (
+    fill_basic_lands as _fill_basic_lands,
+)
+from .allocation import (
+    render_mana_base as _print_mana_base,
+)
+from .candidate_acquisition import (
+    filter_candidates as _filter_candidates,
+)
+from .models import CardFilterConfig, CreatorConfig, ManaBaseLimits
 
 
-class ScryfallCard(TypedDict):
-    """Subset of the Scryfall card JSON fields actually used in this module."""
-
-    name: str
-    oracle_text: str
-    color_identity: NotRequired[list[str]]
-    prices: dict[str, str | None]
-
-
-@dataclass(frozen=True)
-class CardFilterConfig:
-    """Options used when filtering candidate lands."""
-
-    colors: str
-    price_source: str
-    max_price_group_average: float
-    max_price_specific_lands: float
-    allow_off_color_lands: bool
-
-
-def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_arguments(argv: Sequence[str] | None = None, *, defaults: CreatorConfig | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a mana base for a Commander deck in Magic: The Gathering.")
 
-    parser.add_argument("--colors", type=str, required=True, help='Colors of the deck (e.g., "WUBRG")')
-    parser.add_argument("--total_lands", type=int, default=40, help="Total number of lands in the deck")
-    parser.add_argument("--min_basics", type=int, default=5, help="Minimum number of basic lands")
+    parser.add_argument(
+        "--colors",
+        type=str,
+        required=defaults is None,
+        default=None if defaults is None else defaults.colors,
+        help='Colors of the deck (e.g., "WUBRG")',
+    )
+    parser.add_argument("--total-lands", type=int, default=40, help="Total number of lands in the deck")
+    parser.add_argument("--min-basics", type=int, default=5, help="Minimum number of basic lands")
     parser.add_argument("--budget", type=float, default=500.0, help="Total budget for lands")
     parser.add_argument(
-        "--max_price_group_average",
+        "--max-price-group-average",
         type=float,
         default=50.0,
-        help="Maximum average price for each of the groups of lands specified in --enable_groups",
+        help="Maximum average price for each of the groups of lands specified in --enable-groups",
     )
     parser.add_argument(
-        "--max_price_specific_lands",
+        "--max-price-specific-lands",
         type=float,
         default=50.0,
-        help="Maximum price for each of the lands specified in --enable_specific_lands",
+        help="Maximum price for each of the lands specified in --enable-specific-lands",
     )
     parser.add_argument(
-        "--price_source", type=str, default="usd", choices=["usd", "eur", "tix"], help="Source for card prices"
+        "--price-source",
+        type=str,
+        default="usd",
+        choices=["usd", "eur", "tix"],
+        help="Source for card prices",
     )
     parser.add_argument(
-        "--enable_groups",
+        "--allow-stale-data",
+        action="store_true",
+        help="Allow cached Scryfall card prices that have exceeded the freshness period",
+    )
+    parser.add_argument(
+        "--enable-groups",
         type=str,
         nargs="*",
         help="Enable specific groups of lands (Scryfall queries)",
@@ -104,10 +99,14 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ],
     )
     parser.add_argument(
-        "--disable_groups", type=str, nargs="*", default=[], help="Disable specific groups of lands (Scryfall queries)"
+        "--disable-groups",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Disable specific groups of lands (Scryfall queries)",
     )
     parser.add_argument(
-        "--enable_specific_lands",
+        "--enable-specific-lands",
         type=str,
         nargs="*",
         help="Enable specific lands (exact names)",
@@ -123,25 +122,40 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ],
     )
     parser.add_argument(
-        "--disable_specific_lands",
+        "--disable-specific-lands",
         type=str,
         nargs="*",
         default=[],
         help="Disable specific lands (exact names)",
     )
-    parser.add_argument("--allow_off_color_lands", action="store_true", help="Allow off-color lands")
+    parser.add_argument("--allow-off-color-lands", action="store_true", help="Allow off-color lands")
+    if defaults is not None:
+        parser.set_defaults(
+            total_lands=defaults.total_lands,
+            min_basics=defaults.min_basics,
+            budget=defaults.budget,
+            max_price_group_average=defaults.max_price_group_average,
+            max_price_specific_lands=defaults.max_price_specific_lands,
+            price_source=defaults.price_source,
+            enable_groups=defaults.enable_groups,
+            disable_groups=defaults.disable_groups,
+            enable_specific_lands=defaults.enable_specific_lands,
+            disable_specific_lands=defaults.disable_specific_lands,
+            allow_off_color_lands=defaults.allow_off_color_lands,
+            allow_stale_data=defaults.allow_stale_data,
+        )
     args = parser.parse_args(argv)
 
     # Make colors uppercase and check for duplicates, validate that colors are valid (WUBRGC).
     if len(args.colors.casefold()) != len(set(args.colors.casefold())):
         msg = "Duplicate colors specified. Each color should be unique."
-        raise ValueError(msg)
+        parser.error(msg)
     args.colors = args.colors.casefold()
     valid_colors = set("wubrg")
     colorless_colors = set("c")
     if not set(args.colors).issubset(valid_colors) and not set(args.colors).issubset(colorless_colors):
         msg = "Invalid colors specified. Valid colors are [W, U, B, R, G], or C."
-        raise ValueError(msg)
+        parser.error(msg)
 
     # Make all group and specific land names lowercase for consistency.
     args.enable_groups = [group.casefold() for group in args.enable_groups]
@@ -152,262 +166,55 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-# Query Scryfall API for cards based on a query string.
-# Use a local cache keyed by the query hash.
-# If the cache file exists, load the results from the cache instead of querying Scryfall again.
-def query_scryfall(query: str) -> list[ScryfallCard]:
-    query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
-
-    # Try to load the results from the cache file.
-    script_dir = Path(__file__).parent
-    cache_file = Path(f"{script_dir}/.cache/{query_hash}.json")
-    if cache_file.exists():
-        with cache_file.open("r", encoding="utf-8") as f:
-            return json.load(f)["data"]
-
-    params = {"q": query}
-    response = requests.get(f"{SCRYFALL_API_URL}", params=params, headers=SCRYFALL_HEADERS, timeout=30)
-    response_json: dict[str, list[ScryfallCard]] = {"data": []}
-
-    if response.status_code == HTTP_OK:
-        response_json = response.json()
-    else:
-        print(f"Error fetching cards for query '{query}': {response.status_code}")
-
-    if response.status_code in (200, 404):
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with cache_file.open("w", encoding="utf-8") as f:
-            json.dump(response_json, f, indent=2)
-
-    return response_json["data"]
-
-
-# Get all cards from Scryfall based on groups.
-def populate_cards_from_groups(groups: list[str], price_source: str) -> dict[str, list[ScryfallCard]]:
-    cards_per_group: dict[str, list[ScryfallCard]] = {}
-    for group in groups:
-        query = f"{SCRYFALL_BASE_QUERY.format(price_source=price_source)} {group}"
-        data = query_scryfall(query)
-        cards_per_group[group] = data
-    return cards_per_group
-
-
-# Get all cards from Scryfall based on exact names.
-def populate_cards_from_names(names: list[str], price_source: str) -> list[ScryfallCard]:
-    cards: list[ScryfallCard] = []
-    for name in names:
-        query = f'{SCRYFALL_BASE_QUERY.format(price_source=price_source)} !"{name}"'
-        data = query_scryfall(query)
-        with suppress(StopIteration):
-            cards.append(next(card for card in data if str(card["name"]).casefold() == name))
-    return cards
-
-
-def _is_fetchland_group(group: str | None) -> bool:
-    """Return whether a group contains fetchland candidates."""
-    return bool(group and (group == "otag:cycle-ala-panorama" or "fetchland" in group))
-
-
-def _fetches_allowed_color(oracle_text: str, colors: str, *, allow_off_color_lands: bool) -> bool:
-    """Return whether fetchland text is compatible with the deck colors."""
-    basic_land_names = {"w": "Plains", "u": "Island", "b": "Swamp", "r": "Mountain", "g": "Forest"}
-    matching_colors = [color for color, land in basic_land_names.items() if land in oracle_text and color in colors]
-    found_colors = [color for color, land in basic_land_names.items() if land in oracle_text]
-    return bool(matching_colors) if allow_off_color_lands else len(found_colors) == len(matching_colors)
-
-
-def should_remove_fetchland(card: ScryfallCard, group: str | None, colors: str, *, allow_off_color_lands: bool) -> bool:
-    if not group:
-        query = f'{SCRYFALL_BASE_QUERY.format(price_source="usd")} otag:fetchland !"{card["name"]}"'
-        data = query_scryfall(query)
-        if data and data[0]["name"] == card["name"]:
-            group = "fetchland"
-
-    if not _is_fetchland_group(group):
-        return False
-
-    oracle_text = str(card["oracle_text"])
-    return not _fetches_allowed_color(oracle_text, colors, allow_off_color_lands=allow_off_color_lands)
-
-
-# Function to check if the color identity of a card matches the deck's colors (is a subset of the deck's colors).
-# If the card has no color identity, it is considered to match any color identity.
-def is_color_identity_matching(card: ScryfallCard, colors: str) -> bool:
-    color_identity = card.get("color_identity", [])
-    if not color_identity:
-        return True
-    return {c.casefold() for c in color_identity}.issubset(set(colors))
-
-
-# Process the cards to get their prices and filter out any that should be removed based on the user preferences.
-def process_cards(
-    cards: list[ScryfallCard],
-    config: CardFilterConfig,
-    group: str | None,
-) -> dict[str, float]:
-    processed_cards: dict[str, float] = {}
-
-    for card in cards:
-        # Filter out cards by color identity.
-        if not is_color_identity_matching(card, config.colors):
-            continue
-
-        # Filter out cards that are off-color fetchlands (they don't contain color identity info).
-        if should_remove_fetchland(card, group, config.colors, allow_off_color_lands=config.allow_off_color_lands):
-            if group:
-                restriction = "" if config.allow_off_color_lands else "strict "
-                print(f"Removing card '{card['name']}' from group '{group}' due to {restriction}off-color restriction.")
-            else:
-                restriction = "" if config.allow_off_color_lands else "strict "
-                print(f"Removing card '{card['name']}' due to {restriction}off-color restriction.")
-            continue
-
-        # Filter out specific lands by price.
-        price = get_price(config.price_source, card)
-        if group == "" and price > config.max_price_specific_lands:
-            print(f"Removing card '{card['name']}' because its price is above the specific-land limit.")
-            continue
-        processed_cards[card["name"]] = price
-
-    # Filter out groups by price.
-    if processed_cards and group:
-        average_price = sum(processed_cards.values()) / len(processed_cards)
-        print(f'"{group}": {average_price:.2f}')
-        if average_price > config.max_price_group_average:
-            print(f"Removing group '{group}' because its average price is above the group limit.")
-            return {}
-
-    return processed_cards
-
-
-def get_price(price_source: str, card: ScryfallCard) -> float:
-    prices = card["prices"]
-    direct_price = prices.get(price_source)
-    if direct_price is not None:
-        return float(direct_price)
-
-    possible_prices: list[float] = []
-    for price_name, price in prices.items():
-        if price_name.startswith(price_source) and price is not None:
-            possible_prices.append(float(price))
-    if possible_prices:
-        price = min(possible_prices)
-    else:
-        price = float("inf")
-        print(f"Error fetching price for card '{card['name']}' with price source '{price_source}'.")
-
-    return price
-
-
-def _filter_candidates(
-    args: argparse.Namespace, config: CardFilterConfig
-) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
-    """Load, filter, and reconcile enabled and disabled land candidates."""
-    enabled_groups_cards = populate_cards_from_groups(args.enable_groups, args.price_source)
-    disabled_groups_cards = populate_cards_from_groups(args.disable_groups, args.price_source)
-    disabled_group_names = {card["name"].casefold() for cards in disabled_groups_cards.values() for card in cards}
-    enabled_specific_lands_cards = populate_cards_from_names(args.enable_specific_lands, args.price_source)
-    disabled_specific_lands_cards = populate_cards_from_names(args.disable_specific_lands, args.price_source)
-
-    enabled_groups_cards = {
-        group: process_cards(
-            cards,
-            config,
-            group=group,
-        )
-        for group, cards in enabled_groups_cards.items()
-    }
-    enabled_specific_lands_cards = process_cards(
-        enabled_specific_lands_cards,
-        config,
-        group="",
-    )
-    disabled_specific_lands_cards = process_cards(
-        disabled_specific_lands_cards,
-        config,
-        group="",
-    )
-
-    groups_cards = {
-        group: {name: price for name, price in cards.items() if name.casefold() not in disabled_group_names}
-        for group, cards in enabled_groups_cards.items()
-    }
-    groups_cards = {group: cards for group, cards in groups_cards.items() if cards}
-    specific_lands_cards = {
-        card: price for card, price in enabled_specific_lands_cards.items() if card not in disabled_specific_lands_cards
-    }
-    return groups_cards, specific_lands_cards
-
-
-def _add_specific_lands(
-    args: argparse.Namespace, lands: list[str], total_price: float, cards: dict[str, float]
-) -> float:
-    """Add specific lands that fit the budget and land-count limits."""
-    for card, price in cards.items():
-        if total_price + price <= args.budget and len(lands) < args.total_lands - args.min_basics:
-            lands.append(card)
-            total_price += price
-            print(f"Adding specific land '{card}' with price {price:.2f}. Total price: {total_price:.2f}.")
-        elif total_price + price > args.budget:
-            print(f"Skipping specific land '{card}' because it exceeds the remaining budget.")
-        elif len(lands) >= args.total_lands - args.min_basics:
-            print(f"Skipping specific land '{card}' because it would exceed the land count.")
-    return total_price
-
-
-def _add_land_groups(
-    args: argparse.Namespace, lands: list[str], total_price: float, groups: dict[str, dict[str, float]]
-) -> float:
-    """Add complete land groups that fit the budget and land-count limits."""
-    for group, cards in groups.items():
-        group_total_price = sum(cards.values())
-        within_budget = total_price + group_total_price <= args.budget
-        within_count = len(lands) + len(cards) <= args.total_lands - args.min_basics
-        if within_budget and within_count:
-            lands.extend(cards.keys())
-            total_price += group_total_price
-            print(f"Adding {len(cards)} lands in group '{group}' with price {group_total_price:.2f}.")
-        elif total_price + group_total_price > args.budget:
-            print(f"Skipping group '{group}' because it exceeds the remaining budget.")
-        elif len(lands) + len(cards) > args.total_lands - args.min_basics:
-            print(f"Skipping group '{group}' because it would exceed the land count.")
-    return total_price
-
-
-def _fill_basic_lands(args: argparse.Namespace, lands: list[str]) -> None:
-    """Fill remaining slots with basics matching the deck colors."""
-    basic_land_names = {"w": "Plains", "u": "Island", "b": "Swamp", "r": "Mountain", "g": "Forest", "c": "Wastes"}
-    while len(lands) < args.total_lands:
-        for color in args.colors:
-            lands.append(basic_land_names[color])
-            if len(lands) >= args.total_lands:
-                return
-
-
-def _print_mana_base(lands: list[str], total_price: float) -> None:
-    """Print the resulting mana base grouped alphabetically."""
-    print(f"Final Mana Base ({len(lands)} lands, total price: {total_price:.2f}):")
-    for land, count in Counter(sorted(lands)).items():
-        print(f"{count} {land}")
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    args = parse_arguments(argv)
-    config = CardFilterConfig(
+def creator_config_from_namespace(args: argparse.Namespace) -> CreatorConfig:
+    return CreatorConfig(
         colors=args.colors,
-        price_source=args.price_source,
+        total_lands=args.total_lands,
+        min_basics=args.min_basics,
+        budget=args.budget,
         max_price_group_average=args.max_price_group_average,
         max_price_specific_lands=args.max_price_specific_lands,
+        price_source=args.price_source,
+        enable_groups=tuple(args.enable_groups),
+        disable_groups=tuple(args.disable_groups),
+        enable_specific_lands=tuple(args.enable_specific_lands),
+        disable_specific_lands=tuple(args.disable_specific_lands),
         allow_off_color_lands=args.allow_off_color_lands,
+        allow_stale_data=args.allow_stale_data,
     )
-    groups_cards, specific_lands_cards = _filter_candidates(args, config)
+
+
+def _run(config: CreatorConfig) -> None:
+    filter_config = CardFilterConfig(
+        colors=config.colors,
+        price_source=config.price_source,
+        max_price_group_average=config.max_price_group_average,
+        max_price_specific_lands=config.max_price_specific_lands,
+        allow_off_color_lands=config.allow_off_color_lands,
+    )
+    with ScryfallService(allow_stale_data=config.allow_stale_data) as service:
+        groups_cards, specific_lands_cards = _filter_candidates(config, filter_config, service)
+    limits = ManaBaseLimits(config.colors, config.budget, config.total_lands, config.min_basics)
     lands: list[str] = []
     total_price = 0.0
-    total_price = _add_specific_lands(args, lands, total_price, specific_lands_cards)
-    total_price = _add_land_groups(args, lands, total_price, groups_cards)
-    _fill_basic_lands(args, lands)
+    total_price = _add_specific_lands(limits, lands, total_price, specific_lands_cards)
+    total_price = _add_land_groups(limits, lands, total_price, groups_cards)
+    _fill_basic_lands(limits, lands)
     _print_mana_base(lands, total_price)
 
 
+def run_creator_config(config: CreatorConfig) -> int:
+    try:
+        _run(config)
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return run_creator_config(creator_config_from_namespace(parse_arguments(argv)))
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

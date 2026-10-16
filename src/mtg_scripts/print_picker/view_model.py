@@ -61,7 +61,7 @@ class CardSlot:
 
     @property
     def status_text(self) -> str:
-        if self.error:
+        if self.error is not None and self.error != "":
             return self.error
         if self.info_loading:
             return "Loading info..."

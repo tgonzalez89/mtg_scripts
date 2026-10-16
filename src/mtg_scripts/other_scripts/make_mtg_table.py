@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -12,6 +13,8 @@ from docx.oxml.ns import qn
 from docx.shared import Mm, Pt
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from docx.table import Table, _Cell
 
 ROWS: Final[tuple[tuple[str, str, str], ...]] = (
@@ -78,7 +81,7 @@ def create_table(output_path: Path) -> None:
     print(f"Document saved as {output_path}")
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create an MTG reference table document.")
     parser.add_argument(
         "--output",
@@ -86,9 +89,14 @@ def main() -> None:
         default=Path("mtg_table_63x88mm.docx"),
         help="Output Word document (default: mtg_table_63x88mm.docx).",
     )
-    args = parser.parse_args()
-    create_table(args.output)
+    args = parser.parse_args(argv)
+    try:
+        create_table(args.output)
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

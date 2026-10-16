@@ -2,7 +2,7 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from tkinter import ttk
-from typing import Final, cast
+from typing import Final, cast, override
 
 from PIL import Image, ImageTk
 
@@ -14,6 +14,10 @@ FOUR_BUTTON: Final[int] = 4
 # How many entries either side of the visible one keep their full-resolution
 # art, so stepping back and forth stays instant without holding the whole grid.
 RETAINED_NEIGHBOURS: Final[int] = 1
+
+
+def _normalize_face_group(image: Image.Image | Sequence[Image.Image]) -> list[Image.Image]:
+    return [image] if isinstance(image, Image.Image) else list(image)
 
 
 @dataclass(frozen=True)
@@ -41,10 +45,7 @@ class FullImageWindow(tk.Toplevel):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.images: list[list[Image.Image]] = cast(
-            "list[list[Image.Image]]",
-            [list(image) if isinstance(image, (list, tuple)) else [image] for image in images],
-        )
+        self.images = [_normalize_face_group(image) for image in images]
         self.index = options.index
         self.action_callback = options.action_callback
         self.face_callback = options.face_callback
@@ -65,7 +66,7 @@ class FullImageWindow(tk.Toplevel):
         controls.columnconfigure(1, weight=1)
         self.previous_button = ttk.Button(controls, text="Previous", command=self._previous)
         self.previous_button.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        if options.action_callback is not None and options.action_text:
+        if options.action_callback is not None and bool(options.action_text):
             self.action_button = ttk.Button(controls, text=options.action_text, command=self._run_action)
             self.action_button.grid(row=0, column=1, padx=5, pady=5)
         # Art is loaded lazily, so no entry has its faces yet. The button is
@@ -87,6 +88,7 @@ class FullImageWindow(tk.Toplevel):
         self.bind("<Right>", lambda _event: self._next())
         self._show_current()
 
+    @override
     def destroy(self) -> None:
         self._closed = True
         self.canvas.delete("all")

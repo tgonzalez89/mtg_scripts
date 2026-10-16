@@ -1,33 +1,24 @@
+from __future__ import annotations
+
 import argparse
-import json
 import os
 import sys
+from functools import partial
 from pathlib import Path
-from typing import Final, TypedDict
+from typing import TYPE_CHECKING, Final, TypedDict
 
 from curl_cffi import requests
 
+from mtg_scripts.common.json_io import write_json
+from mtg_scripts.services.moxfield import MoxfieldError, fetch_deck, normalize_moxfield_deck_id
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mtg_scripts.services.moxfield import MoxfieldCardEntry, MoxfieldDeckData
+
 DEBUG: Final[bool] = True
 HTTP_OK: Final[int] = 200
-
-
-class MoxfieldCardInfo(TypedDict, total=False):
-    layout: str
-    set: str
-    cn: str
-
-
-class MoxfieldCardEntry(TypedDict):
-    quantity: int
-    card: MoxfieldCardInfo
-
-
-class MoxfieldDeckData(TypedDict):
-    name: str
-    commanders: dict[str, MoxfieldCardEntry]
-    mainboard: dict[str, MoxfieldCardEntry]
-    sideboard: dict[str, MoxfieldCardEntry]
-    maybeboard: dict[str, MoxfieldCardEntry]
 
 
 class ProcessedCardEntry(TypedDict):
@@ -37,22 +28,7 @@ class ProcessedCardEntry(TypedDict):
     cn: str
 
 
-def normalize_moxfield_deck_id(deck_id: str) -> str:
-    """Normalize a Moxfield deck ID from either a raw ID or a full URL."""
-    if not isinstance(deck_id, str):
-        return deck_id
-
-    cleaned = deck_id.strip().rstrip("/")
-    if not cleaned:
-        return cleaned
-
-    if "/" in cleaned:
-        cleaned = cleaned.rsplit("/", 1)[-1]
-
-    return cleaned
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert Moxfield deck IDs to Forge or XMage .dck files")
 
     parser.add_argument(
@@ -87,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         help="Prompt user before overriding existing .dck files (default: override without prompting)",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def get_default_output_dir(output_format: str) -> Path:
@@ -96,7 +72,7 @@ def get_default_output_dir(output_format: str) -> Path:
         return Path.home() / "Documents" / "xmage_decks"
 
     appdata = os.getenv("APPDATA")
-    if not appdata:
+    if appdata is None or appdata == "":
         msg = "APPDATA environment variable not found"
         raise RuntimeError(msg)
     return Path(appdata) / "Forge" / "decks" / "commander"
@@ -112,19 +88,21 @@ def download_deck(deck_id: str) -> MoxfieldDeckData | None:
         dict: Deck data from Moxfield API
 
     """
-    moxfield_api_url = "https://api.moxfield.com/v2/decks/all/"
+    deck_id = normalize_moxfield_deck_id(deck_id)
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www.moxfield.com",
         "Referer": f"https://www.moxfield.com/decks/{deck_id}",
     }
     try:
-        response = requests.get(moxfield_api_url + deck_id, headers=headers, timeout=30, impersonate="chrome")
-        response.raise_for_status()
-        data: MoxfieldDeckData = response.json()
+        data = fetch_deck(
+            deck_id,
+            get=partial(requests.get, headers=headers, timeout=30, impersonate="chrome"),
+            transport_errors=(requests.RequestsError,),
+        )
         if DEBUG:
-            Path("debug.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except requests.RequestsError as error:
+            write_json(Path("debug.json"), data, sort_keys=False)
+    except MoxfieldError as error:
         print(f"Error downloading deck {deck_id}: {error}")
         return None
     else:
@@ -321,9 +299,7 @@ def create_xmage_dck_file(
         return True
 
 
-def main() -> None:
-    args = parse_args()
-
+def _run(args: argparse.Namespace) -> int:
     # Determine output directory
     output_dir = Path(args.output_dir) if args.output_dir else get_default_output_dir(args.format)
 
@@ -335,7 +311,7 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, RuntimeError, ValueError) as e:
         print(f"Error creating output directory {output_dir}: {e}")
-        sys.exit(1)
+        return 1
 
     successful = 0
     failed = 0
@@ -345,7 +321,7 @@ def main() -> None:
         print(f"\nProcessing deck: {normalized_deck_id}")
 
         data = download_deck(normalized_deck_id)
-        if not data:
+        if not bool(data):
             failed += 1
             continue
 
@@ -381,9 +357,17 @@ def main() -> None:
     print(f"\n{'=' * 50}")
     print(f"Summary: {successful} successful, {failed} failed")
 
-    if failed > 0:
-        sys.exit(1)
+    return 1 if failed else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        return _run(args)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

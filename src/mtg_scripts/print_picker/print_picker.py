@@ -1,10 +1,23 @@
+from __future__ import annotations
+
+import argparse
+import sys
 import tkinter as tk
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
+
+from mtg_scripts.services.scryfall import ScryfallService
 
 from .card_grid import CardGrid, art_size_for
+from .exports import (
+    ImageDownloadRequest,
+    build_export_text,
+    make_copy_unique,
+    plan_image_downloads,
+    safe_filename,
+)
 from .full_image_window import FullImageWindow, ImageWindowOptions
 from .gui_dialogs import DownloadImagesDialog, ExportChoiceDialog, GameSelectionDialog, ProgressDialog
 from .printing_chooser import PrintingChooser
@@ -14,11 +27,8 @@ from .scryfall_backend import ScryfallBackend
 from .ui_queue import UiQueue
 from .view_model import CardSlot
 
-UNIQUE_IMAGE_TOO_SMALL = "Image is too small to encode a unique copy identity."
-IMAGE_PIXEL_ACCESS_UNAVAILABLE = "Unable to access image pixels."
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from PIL import Image
 
@@ -27,19 +37,22 @@ if TYPE_CHECKING:
 
 
 class App(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, cache_dir: str | Path | None = None) -> None:
         super().__init__()
+        self.cache_dir = cache_dir
         self.title("MTG Print Picker")
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.backend: CardBackend = ScryfallBackend()
-        self._backend_factories: dict[str, type[CardBackend]] = {
-            "Magic: The Gathering": ScryfallBackend,
-            "RiftBound": RiftCodexBackend,
+        self.scryfall_service = ScryfallService(cache_dir=self.cache_dir)
+        self.backend: CardBackend = ScryfallBackend(cache_dir=self.cache_dir, service=self.scryfall_service)
+        self._backend_factories: dict[str, Callable[[], CardBackend]] = {
+            "Magic: The Gathering": lambda: ScryfallBackend(cache_dir=self.cache_dir, service=self.scryfall_service),
+            "RiftBound": lambda: RiftCodexBackend(cache_dir=self.cache_dir),
         }
         self.current_game = "Magic: The Gathering"
         self.executor = ThreadPoolExecutor(max_workers=8)
+        self._worker_futures: set[Future[None]] = set()
         self.slots: list[CardSlot] = []
         self.progress_dialog: ProgressDialog | None = None
         self.printing_chooser: PrintingChooser | None = None
@@ -48,14 +61,17 @@ class App(tk.Tk):
         self._ui.start()
         self._build_layout()
 
+    @override
     def destroy(self) -> None:
+        self._ui.stop()
         self._close_full_image()
         self._close_printing_chooser()
+        self._close_progress()
         if self.card_grid.winfo_exists():
             self.card_grid.destroy()
-        self._ui.stop()
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.executor.shutdown(wait=True, cancel_futures=True)
         self.backend.close()
+        self.scryfall_service.close()
         self.slots.clear()
         super().destroy()
 
@@ -102,6 +118,11 @@ class App(tk.Tk):
         if game is None:
             return
         if game != self.current_game:
+            self._close_printing_chooser()
+            self.card_grid.wait_for_workers()
+            self._wait_for_workers()
+            self.card_grid.clear()
+            self.slots.clear()
             self.backend.close()
             self.backend = self._backend_factories[game]()
             self.current_game = game
@@ -122,7 +143,7 @@ class App(tk.Tk):
     def _choose_game(self) -> str | None:
         dialog = GameSelectionDialog(self, self._backend_factories.keys())
         self.wait_window(dialog)
-        return dialog.result
+        return cast("str | None", dialog.result)
 
     def _parse_input(self, raw_text: str) -> list[CardSlot]:
         return [CardSlot(entry=self.backend.parse_line(line)) for line in raw_text.splitlines() if line.strip()]
@@ -223,11 +244,23 @@ class App(tk.Tk):
             size = art_size_for(self.card_grid.grid_zoom)
             self._load_slot_images(slot, size)
             slot.image_size = size
-            self._ui.post(self.card_grid.refresh_slot, slot)
+            self._ui.post(self._refresh_slot_if_current, slot)
 
         slot.image_loading = True
         self.card_grid.refresh_slot(slot)
-        self.executor.submit(load)
+        self._submit_worker(load)
+
+    def _refresh_slot_if_current(self, slot: CardSlot) -> None:
+        if slot in self.card_grid.slots:
+            self.card_grid.refresh_slot(slot)
+
+    def _submit_worker(self, callback: Callable[..., None], *args: object, **kwargs: object) -> None:
+        future = self.executor.submit(callback, *args, **kwargs)
+        self._worker_futures.add(future)
+        future.add_done_callback(self._worker_futures.discard)
+
+    def _wait_for_workers(self) -> None:
+        wait(tuple(self._worker_futures))
 
     # -- caches -------------------------------------------------------------
 
@@ -260,7 +293,7 @@ class App(tk.Tk):
         for index, slot in enumerate(self.slots, start=1):
             card = slot.display_print
             if card is not None:
-                self.executor.submit(
+                self._submit_worker(
                     self._save_slot_images,
                     folder,
                     index,
@@ -282,67 +315,37 @@ class App(tk.Tk):
         images = self.backend.load_images(card, high_quality=True)
         if not images:
             return
-        base_name = self._safe_filename(slot.name)
-        # Raw identifiers, not export syntax: the foil marker `*F*` and the
-        # foil star are both illegal in Windows filenames.
-        set_code = self._safe_filename(card.set_code)
-        collector_number = self._safe_filename(card.collector_number)
-        for copy_number in range(1, slot.quantity + 1):
-            for face_index, image in enumerate(images, start=1):
-                filename = (
-                    f"{index:03d}_{copy_number:02d}_{base_name}_{set_code}_{collector_number}_face{face_index}.png"
-                )
-                image_to_save = (
-                    self._make_copy_unique(image, index, copy_number, face_index) if make_copies_unique else image
-                )
-                image_to_save.save(Path(folder) / filename, format="PNG")
+        targets = plan_image_downloads(
+            ImageDownloadRequest(
+                folder=Path(folder),
+                slot_index=index,
+                slot_name=slot.name,
+                quantity=slot.quantity,
+                set_code=card.set_code,
+                collector_number=card.collector_number,
+                face_count=len(images),
+            )
+        )
+        for target in targets:
+            image = images[target.face_index - 1]
+            image_to_save = (
+                make_copy_unique(image, index, target.copy_number, target.face_index) if make_copies_unique else image
+            )
+            image_to_save.save(target.path, format="PNG")
 
     @staticmethod
     def _make_copy_unique(image: Image.Image, slot_index: int, copy_number: int, face_index: int) -> Image.Image:
-        image_copy = image.convert("RGBA")
-        identity = b"".join(value.to_bytes(8, byteorder="big") for value in (slot_index, copy_number, face_index))
-        required_bits = len(identity) * 8
-        if image_copy.width * image_copy.height * 3 < required_bits:
-            raise ValueError(UNIQUE_IMAGE_TOO_SMALL)
-
-        pixels = image_copy.load()
-        if pixels is None:
-            raise RuntimeError(IMAGE_PIXEL_ACCESS_UNAVAILABLE)
-        for bit_index in range(required_bits):
-            byte = identity[bit_index // 8]
-            bit = (byte >> (7 - bit_index % 8)) & 1
-            pixel_index, channel = divmod(bit_index, 3)
-            x = pixel_index % image_copy.width
-            y = pixel_index // image_copy.width
-            red, green, blue, alpha = cast("tuple[int, int, int, int]", pixels[x, y])
-            if channel == 0:
-                red = (red & 0xFE) | bit
-            elif channel == 1:
-                green = (green & 0xFE) | bit
-            else:
-                blue = (blue & 0xFE) | bit
-            pixels[x, y] = (red, green, blue, alpha)
-        return image_copy
+        return make_copy_unique(image, slot_index, copy_number, face_index)
 
     def _on_export_list(self) -> None:
         if not self.slots:
             messagebox.showinfo("Export list", "Import cards first.")
             return
 
-        # Grouping on the backend's own export text guarantees the result
-        # re-imports cleanly: identical cards collapse into one quantified line.
-        combined: dict[str, int] = {}
-        for slot in self.slots:
-            card = slot.display_print
-            if card is None:
-                continue  # the card was not found, so there is no printing to export
-            card_text = self.backend.export_card_text(card, slot.entry)
-            combined[card_text] = combined.get(card_text, 0) + slot.quantity
-        if not combined:
+        export_text = build_export_text(self.slots, self.backend.export_card_text)
+        if export_text is None:
             messagebox.showinfo("Export list", "None of the imported cards were found.")
             return
-        lines = [f"{quantity} {card_text}" for card_text, quantity in combined.items()]
-        export_text = "\n".join(lines) + "\n"
 
         dialog = ExportChoiceDialog(self)
         self.wait_window(dialog)
@@ -368,8 +371,25 @@ class App(tk.Tk):
 
     @staticmethod
     def _safe_filename(name: str) -> str:
-        return "".join(character for character in name if character.isalnum() or character in " ._-").rstrip()
+        return safe_filename(name)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Choose card printings and export deck lists or images.")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Shared cache root (or use MTG_SCRIPTS_CACHE_DIR; platform cache is the default).",
+    )
+    args = parser.parse_args(argv)
+    try:
+        App(cache_dir=args.cache_dir).mainloop()
+    except (tk.TclError, OSError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    raise SystemExit(main())

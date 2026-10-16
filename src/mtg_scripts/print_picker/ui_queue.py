@@ -49,6 +49,9 @@ class UiQueue:
         if not self._stopped:
             self._tasks.put((callback, args))
 
+    def _is_stopped(self) -> bool:
+        return self._stopped
+
     def _drain(self) -> None:
         self._timer = None
         if self._stopped:
@@ -59,6 +62,6 @@ class UiQueue:
             except queue.Empty:
                 break
             callback(*args)
-            if self._stopped:
+            if self._is_stopped():
                 return
         self._timer = self._widget.after(self._interval_ms, self._drain)
