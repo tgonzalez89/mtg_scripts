@@ -27,20 +27,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument("--themes", "-t", nargs="*", default=[None], help="List of themes (optional).")
 
-    parser.add_argument(
-        "--synergy-threshold", "-s", type=float, default=0.15, help="Synergy threshold between 0 and 1 (default: 0.15)."
-    )
+    parser.add_argument("--lift-threshold", "-l", type=float, default=0.5, help="Minimum EDHREC Lift (default: 0.5).")
 
     parser.add_argument(
         "--inclusion-threshold",
         "-i",
         type=float,
-        default=0.15,
-        help="Inclusion threshold between 0 and 1 (default: 0.15).",
+        default=0.05,
+        help="Inclusion threshold between 0 and 1 (default: 0.05).",
     )
 
     parser.add_argument(
-        "--price-threshold", "-p", type=float, default=25.0, help="Price threshold (positive float, default: 25)."
+        "--price-threshold",
+        "-p",
+        type=float,
+        default=10000.0,
+        help="Price threshold (positive float, default: 10000.0).",
     )
 
     parser.add_argument(
@@ -71,10 +73,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.commander_names = tuple(args.commander_names)
     args.themes = tuple(args.themes) if args.themes else (None,)
 
-    if not (args.synergy_threshold >= 0 and args.synergy_threshold <= 1):
-        msg = "Must be between 0 and 1."
-        parser.error(msg)
-
     if not (args.inclusion_threshold >= 0 and args.inclusion_threshold <= 1):
         msg = "Must be between 0 and 1."
         parser.error(msg)
@@ -99,14 +97,14 @@ def _run(args: argparse.Namespace) -> None:
             data = edhrec.get_commander_data(commander_name, None, theme)
             cards = deck_builder.collect_eligible_cards(
                 data["container"]["json_dict"]["cardlists"],
-                synergy_threshold=args.synergy_threshold,
+                lift_threshold=args.lift_threshold,
                 inclusion_threshold=args.inclusion_threshold,
             )
 
             data = edhrec.get_commander_data(commander_name, "budget", theme)
             cards_budget = deck_builder.collect_eligible_cards(
                 data["container"]["json_dict"]["cardlists"],
-                synergy_threshold=args.synergy_threshold,
+                lift_threshold=args.lift_threshold,
                 inclusion_threshold=args.inclusion_threshold,
             )
 
@@ -131,7 +129,7 @@ def _run(args: argparse.Namespace) -> None:
                     json.dump(cards_budget, fp, indent=2, sort_keys=True)
 
             average_deck = edhrec.get_commanders_average_deck(commander_name, None, theme)
-            avg_deck = deck_builder.average_deck_names(average_deck["decklist"])
+            avg_deck = average_deck["decklist"]
             avg_deck = deck_builder.filter_average_deck_prices(
                 avg_deck,
                 edhrec.get_card_list(avg_deck),
@@ -140,7 +138,7 @@ def _run(args: argparse.Namespace) -> None:
             )
 
             average_deck_budget = edhrec.get_commanders_average_deck(commander_name, "budget", theme)
-            avg_deck_budget = deck_builder.average_deck_names(average_deck_budget["decklist"])
+            avg_deck_budget = average_deck_budget["decklist"]
             avg_deck_budget = deck_builder.filter_average_deck_prices(
                 avg_deck_budget,
                 edhrec.get_card_list(avg_deck_budget),

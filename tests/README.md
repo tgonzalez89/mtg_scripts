@@ -217,7 +217,7 @@ directory unless noted. Do not rename arguments, alter defaults, or standardize 
 
 | Command | Implementation | Inputs and defaults | Outputs and side effects |
 | --- | --- | --- | --- |
-| `build_base_deck` | `build_base_deck/build_base_deck.py` | Required `--commander-names/-c`; `--themes/-t` defaults to the unthemed selection; synergy/inclusion thresholds 0.15, price threshold 25, vendor `cardkingdom`; `--output-card-list/-o=card_list.txt`. | EDHREC requests; sorted `# MAIN DECK` and `# CONSIDERING` sections in a text file. Parses/runs at import. |
+| `build_base_deck` | `build_base_deck/build_base_deck.py` | Required `--commander-names/-c`; `--themes/-t` defaults to the unthemed selection; Lift threshold 1.0, inclusion threshold 0.15, price threshold 25, vendor `cardkingdom`; `--output-card-list/-o=card_list.txt`. | EDHREC requests; sorted `# MAIN DECK` and `# CONSIDERING` sections in a text file. Parses/runs at import. |
 | `calculate_to_purchase` | `calculate_to_purchase/calculate_to_purchase.py` | Required `--want-deck-ids/-w`; `--have-deck-ids/-v=[]`; `--collection-file/-c=collection.csv`; optional purchased/filter files default to `None`, despite help suggesting filenames; `--buy-considering/-b` false. | Moxfield requests; `--to-purchase-file=to_purchase.txt`, `--to-purchase-decks-file=to_purchase_decks.txt`, `--to-purchase-considering-file=to_purchase_considering.txt`; quantity/name lines. Parses/runs at import. |
 | `cardmarket_optimizer` | `cardmarket_optimizer/optimizer.py` | `--card-list/-c=card_list.txt`, `--sellers-database/-s=sellers_database.json`, `--offers-database/-o=offers_database.json`. | `--selected-offers/-e=selected_offers.json`; printed item/shipping/total costs and seller count. Reads, mutates offers, and writes at import. |
 | `cardmarket_scraper` | `cardmarket_optimizer/scraper.py` | Required `--username/-u`, `--password/-p`; optional browser profile; card list default as above; `--max-editions/-m=25`, `--min-offers-per-edition/-x=25`, `--max-total-offers/-t=500`. | Firefox/account/cart interactions; seller and offer JSON at the `-s/-o` defaults above. Keep-awake context and executable body run at import; no `main`. |
@@ -236,7 +236,7 @@ directory unless noted. Do not rename arguments, alter defaults, or standardize 
 
 ### Additional Parser Details
 
-- Base-deck short options: synergy `-s`, inclusion `-i`, price `-p`, vendor `-v`. Vendor choices remain those in its parser.
+- Base-deck short options: Lift `-l`, inclusion `-i`, price `-p`, vendor `-v`. Vendor choices remain those in its parser.
 - Scraper uses `--browser-profile/-b`; shopping wizard and CardTrader use the same spelling. Credentials are currently
   CLI arguments; do not put real values into snapshots, logs, fixtures, or automated workflow runs.
 - Generator required options: `--num-sellers`, `--seller-min-shipping-price`, `--seller-max-shipping-price`,

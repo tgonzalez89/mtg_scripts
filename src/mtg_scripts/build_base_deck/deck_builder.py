@@ -13,14 +13,14 @@ if TYPE_CHECKING:
 
 
 def collect_eligible_cards(
-    cardlists: list[dict[str, Any]], *, synergy_threshold: float, inclusion_threshold: float
+    cardlists: list[dict[str, Any]], *, lift_threshold: float, inclusion_threshold: float
 ) -> dict[str, CardData]:
     cards: dict[str, CardData] = {}
     for card_list in cardlists:
         for card in card_list["cardviews"]:
-            if (
-                card["synergy"] >= synergy_threshold
-                or card["num_decks"] / card["potential_decks"] >= inclusion_threshold
+            lift = card.get("lift")
+            if (isinstance(lift, (int, float)) and lift >= lift_threshold) or (
+                card["num_decks"] / card["potential_decks"] >= inclusion_threshold
             ):
                 cards[card["name"]] = card
     return cards
@@ -36,10 +36,6 @@ def filter_candidate_prices(
         else:
             candidates.pop(card["name"])
     return candidates
-
-
-def average_deck_names(decklist: list[str]) -> list[str]:
-    return [card.split(" ", maxsplit=1)[1] for card in decklist]
 
 
 def filter_average_deck_prices(

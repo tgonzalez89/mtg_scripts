@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, TypedDict, cast, override
 
 type CacheDecorator = Callable[[Callable[..., Any]], Callable[..., Any]]
@@ -23,6 +23,34 @@ class EDHRecClient(Protocol):
     def get_commanders_average_deck(
         self, card_name: str, budget: str | None = None, theme: str | None = None
     ) -> AverageDeckResult: ...
+
+
+def _card_name(entry: object) -> str | None:
+    if isinstance(entry, str):
+        quantity, separator, name = entry.partition(" ")
+        return name if separator and quantity.isdecimal() else entry
+    if isinstance(entry, (list, tuple)) and entry and isinstance(entry[0], str):
+        return entry[0]
+    return None
+
+
+def _normalize_average_decklist(deck: object) -> list[str]:
+    if isinstance(deck, list):
+        return [name for entry in deck if (name := _card_name(entry)) is not None]
+    if not isinstance(deck, Mapping):
+        return []
+
+    names: list[str] = []
+    card_categories = deck.get("cards", {})
+    if isinstance(card_categories, Mapping):
+        for entries in card_categories.values():
+            if isinstance(entries, list):
+                names.extend(name for entry in entries if (name := _card_name(entry)) is not None)
+
+    commander = deck.get("commander") or deck.get("commander_v2", [])
+    commander_entries = commander if isinstance(commander, list) else [commander]
+    names.extend(name for entry in commander_entries if (name := _card_name(entry)) is not None)
+    return names
 
 
 def create_edhrec_client() -> EDHRecClient:
@@ -55,6 +83,6 @@ def create_edhrec_client() -> EDHRecClient:
             )
             response = self._get(average_deck_uri, query_params=params)
             data = self._get_nextjs_data(response)
-            return {"commander": card_name, "decklist": cast("list[str]", data.get("deck") or [])}
+            return {"commander": card_name, "decklist": _normalize_average_decklist(data.get("deck"))}
 
     return cast("EDHRecClient", MyEDHRec())

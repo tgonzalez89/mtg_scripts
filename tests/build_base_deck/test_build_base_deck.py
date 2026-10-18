@@ -4,7 +4,8 @@ import sys
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
-from mtg_scripts.build_base_deck import build_base_deck
+from mtg_scripts.build_base_deck import build_base_deck, deck_builder
+from mtg_scripts.build_base_deck.edhrec_client import _normalize_average_decklist
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def _card_view(name: str) -> dict[str, Any]:
-    return {"name": name, "synergy": 0.2, "num_decks": 1, "potential_decks": 10}
+    return {"name": name, "lift": 5.0, "num_decks": 1, "potential_decks": 10}
 
 
 def test_main_preserves_regular_budget_price_and_occurrence_output(
@@ -42,14 +43,8 @@ def test_main_preserves_regular_budget_price_and_occurrence_output(
                 )
                 cardlists = [{"cardviews": [_card_view(name) for name in names]}]
                 return {"container": {"json_dict": {"cardlists": cardlists}}}
-            deck = (
-                ["1 Main Card", "1 Average Only"]
-                if budget is None
-                else [
-                    "1 Main Card",
-                    "1 Budget Average Only",
-                ]
-            )
+            names = ["Main Card", "Average Only"] if budget is None else ["Main Card", "Budget Average Only"]
+            deck = {"cards": {"Other": [[name, 1] for name in names]}, "commander": ["Test Commander"]}
             return {"deck": deck}
 
         def get_card_list(self, names: list[str]) -> dict[str, Any]:
@@ -79,5 +74,36 @@ def test_main_preserves_regular_budget_price_and_occurrence_output(
 
     assert build_base_deck.main(["--commander-names", "Test Commander", "--output-card-list", str(output_path)]) == 0
     assert output_path.read_text(encoding="utf-8") == (
-        "# MAIN DECK\nMain Card\n\n# CONSIDERING\nAverage Only\nBudget Average Only\nBudget Only\nPopular Pick\n"
+        "# MAIN DECK\nMain Card\n\n# CONSIDERING\nAverage Only\nBudget Average Only\nBudget Only\n"
+        "Popular Pick\nTest Commander\n"
     )
+
+
+def test_lift_threshold_accepts_values_above_one() -> None:
+    args = build_base_deck.parse_args(["--commander-names", "Test Commander", "--lift-threshold", "4.5"])
+
+    assert args.lift_threshold == 4.5
+
+
+def test_average_deck_adapter_supports_legacy_and_plain_card_names() -> None:
+    assert _normalize_average_decklist(["1 Arcane Signet", "Sol Ring"]) == ["Arcane Signet", "Sol Ring"]
+    assert _normalize_average_decklist(
+        {"cards": {"Creature": [["Grizzly Bears", 1]]}, "commander_v2": [["Test Commander", 1]]}
+    ) == ["Grizzly Bears", "Test Commander"]
+
+
+def test_card_eligibility_uses_lift_or_inclusion_not_synergy() -> None:
+    cardlists = [
+        {
+            "cardviews": [
+                {"name": "High Lift", "lift": 4.0, "num_decks": 1, "potential_decks": 100},
+                {"name": "Popular", "num_decks": 20, "potential_decks": 100},
+                {"name": "Synergy Only", "synergy": 1.0, "num_decks": 1, "potential_decks": 100},
+                {"name": "Null Lift", "lift": None, "num_decks": 1, "potential_decks": 100},
+            ]
+        }
+    ]
+
+    cards = deck_builder.collect_eligible_cards(cardlists, lift_threshold=3.5, inclusion_threshold=0.15)
+
+    assert set(cards) == {"High Lift", "Popular"}
