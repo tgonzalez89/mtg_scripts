@@ -79,6 +79,7 @@ THEMES = {
             "Mana Confluence",
             "City of Brass",
             "Multiversal Passage",
+            "Horizon of Progress",
         ],
     ),
     "all-duals": (
@@ -121,6 +122,7 @@ THEMES = {
             "Mana Confluence",
             "City of Brass",
             "Multiversal Passage",
+            "Horizon of Progress",
         ],
     ),
     "basic-types": (
@@ -139,7 +141,7 @@ THEMES = {
             "otag:cycle-reveal-land",
             "otag:cycle-bicycle-land",
         ],
-        ["Command Tower", "Fabled Passage", "Prismatic Vista", "Multiversal Passage"],
+        ["Command Tower", "Fabled Passage", "Prismatic Vista", "Multiversal Passage", "Horizon of Progress"],
     ),
     "untapped": (
         [
@@ -163,6 +165,7 @@ THEMES = {
             "Mana Confluence",
             "City of Brass",
             "Multiversal Passage",
+            "Horizon of Progress",
         ],
     ),
     "mdfcs-all": (
