@@ -18,7 +18,7 @@ share/python-wheels/
 # uv
 # ---------------------------------------------------------------------------
 .venv/
-# uv.lock is intentionally COMMITTED - do not add it here
+uv.lock
 
 # ---------------------------------------------------------------------------
 # Testing & coverage
