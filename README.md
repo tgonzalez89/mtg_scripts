@@ -24,29 +24,21 @@ uv sync --all-extras
 
 ### tesserocr on Windows
 
-`tesserocr` has no official Windows wheel on PyPI. Before running `uv sync --all-extras` you must provide the wheel manually:
+Install Tesseract-OCR and its required data following the instructions on the
+[tesserocr PyPI page](https://pypi.org/project/tesserocr/), then install the Forge extra:
 
-1. **Install Tesseract-OCR** on your machine.
-   Follow the instructions on the [tesserocr PyPI page](https://pypi.org/project/tesserocr/).
+```bash
+uv sync --extra forge
+```
 
-2. **Download the matching wheel** for your Python version and architecture from:
-   [https://github.com/simonflueckiger/tesserocr-windows_build/releases](https://github.com/simonflueckiger/tesserocr-windows_build/releases)
+On standard CPython on Windows, uv automatically downloads and caches the `tesserocr` wheel from the [Windows wheel releases](https://github.com/simonflueckiger/tesserocr-windows_build/releases).
+No manual download or configuration edits are needed. `uv sync --all-extras` uses the same source.
 
-   Pick the file that matches your setup, e.g.:
-   `tesserocr-2.11.0-cp314-cp314-win_amd64.whl` for Python 3.14 on 64-bit Windows.
-
-3. **Place the wheel** in the `wheels/` directory at the repository root:
-   ```
-   mtg_scripts/
-   └── wheels/
-       └── tesserocr-2.11.0-cp314-cp314-win_amd64.whl
-   ```
-
-4. **Uncomment** the [tool.uv] and [tool.uv.sources] sections in the pyproject.toml
-
-5. **Run `uv sync --all-extras`** - `uv` will pick up the wheel automatically from that directory.
-
-> **Note:** The `wheels/` directory is git-ignored for `.whl` files, so wheels are never committed to the repository. The platform's wheel must be manually added locally.
+On Linux and other nonmatching environments, uv resolves `tesserocr` from PyPI,
+which may require a source build and system Tesseract development libraries.
+The configured Windows wheel does not cover all Python versions, architectures,
+or free-threaded Python builds; those require a compatible wheel or source build.
+To bypass the configured source explicitly, use `uv sync --extra forge --no-sources`.
 
 ## CLI entries
 
@@ -129,15 +121,6 @@ The Print Picker adapter delegates storage to this service but retains its name 
 application owns one service and shares it across backend instances; shutdown waits for active workers before closing
 the service. Mana-base uses local tag/name discovery for the standard groups and cached API searches for custom query
 groups or local misses; vanilla continues to use cached full API search.
-
-### Feature-local Workflows
-
-Phase 7 separates EDHREC acquisition from base-deck selection/output, purchase-file parsing from explicit purchase
-calculation results, and Cardmarket/CardTrader policy from their site-specific pages. Mana-base now has distinct
-acquisition, filtering, allocation, and typed recipe configuration boundaries. Forge's OCR and run configuration are
-separate from its window/match session. Print Picker's export formatting and image-download planning are headless
-helpers. Deck Exporter already had separate extraction and format renderers, so it remains in place; small `other_scripts`
-commands remain function-oriented rather than being split into unnecessary modules.
 
 ## Testing
 
