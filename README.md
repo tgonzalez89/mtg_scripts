@@ -31,13 +31,25 @@ Install Tesseract-OCR and its required data following the instructions on the
 uv sync --extra forge
 ```
 
-On standard CPython on Windows, uv automatically downloads and caches the `tesserocr` wheel from the [Windows wheel releases](https://github.com/simonflueckiger/tesserocr-windows_build/releases).
-No manual download or configuration edits are needed. `uv sync --all-extras` uses the same source.
+On Windows, uv selects a compatible `tesserocr` wheel by Python version, ABI,
+architecture, and package version from the local [wheel index](wheel-index/tesserocr/index.html).
+The index contains remote download links, not wheel binaries; uv downloads and caches
+the selected wheel automatically. `uv sync --all-extras` uses the same index.
+uv currently records the local index's absolute path in lockfile metadata, so run
+plain `uv sync --all-extras` after moving or cloning the repository to refresh that
+metadata before using `--locked`.
 
-On Linux and other nonmatching environments, uv resolves `tesserocr` from PyPI,
-which may require a source build and system Tesseract development libraries.
-The configured Windows wheel does not cover all Python versions, architectures,
-or free-threaded Python builds; those require a compatible wheel or source build.
+Other Python versions, architectures, and free-threaded builds not currently listed
+in the index would need compatible links added to it. Windows installation fails if no
+compatible wheel is listed, rather than attempting a source build.
+
+To support a new Windows wheel, add its direct download link to the index. Keep only
+one Tesseract library variant per wheel filename: builds for Tesseract 3, 4, and 5
+share the same `tesserocr` package version and compatibility tags, so uv cannot
+select between them based on the installed Tesseract version.
+
+On Linux and other non-Windows environments, uv resolves `tesserocr>=2.11.0` from
+PyPI, which may require a source build and system Tesseract development libraries.
 To bypass the configured source explicitly, use `uv sync --extra forge --no-sources`.
 
 ## CLI entries

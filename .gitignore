@@ -74,6 +74,7 @@ desktop.ini
 .mpypy_cache/
 *.csv
 *.html
+!wheel-index/tesserocr/index.html
 *.json
 !.vscode/*.json
 *.txt
