@@ -42,7 +42,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-forge = ["tesserocr"]
+forge = ["tesserocr>=2.11.0"]
 
 # Dependency groups (PEP 735) - preferred modern workflow for local/dev tooling.
 # These are not published as installable extras for downstream users.
@@ -55,15 +55,14 @@ dev = [
   "ty>=0.0.1a8",
 ]
 
-# Local wheel directory for packages that have no PyPI build for Windows
-# (e.g. tesserocr). Developers place the matching .whl file in wheels/ and uv
-# resolves it from there. The directory is git-ignored; see README for links.
-# Uncomment these lines in Windows.
-# [tool.uv]
-# find-links = ["./wheels"]
+[tool.uv.sources.tesserocr]
+index = "tesserocr-windows"
+marker = "sys_platform == 'win32'"
 
-# [tool.uv.sources]
-# tesserocr = { path = "wheels/tesserocr-2.11.0-cp314-cp314-win_amd64.whl" }
+[[tool.uv.index]]
+name = "tesserocr-windows"
+url = "./wheel-index"
+explicit = true
 
 # ---------------------------------------------------------------------------
 # Project scripts (entry points)

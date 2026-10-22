@@ -24,29 +24,33 @@ uv sync --all-extras
 
 ### tesserocr on Windows
 
-`tesserocr` has no official Windows wheel on PyPI. Before running `uv sync --all-extras` you must provide the wheel manually:
+Install Tesseract-OCR and its required data following the instructions on the
+[tesserocr PyPI page](https://pypi.org/project/tesserocr/), then install the Forge extra:
 
-1. **Install Tesseract-OCR** on your machine.
-   Follow the instructions on the [tesserocr PyPI page](https://pypi.org/project/tesserocr/).
+```bash
+uv sync --extra forge
+```
 
-2. **Download the matching wheel** for your Python version and architecture from:
-   [https://github.com/simonflueckiger/tesserocr-windows_build/releases](https://github.com/simonflueckiger/tesserocr-windows_build/releases)
+On Windows, uv selects a compatible `tesserocr` wheel by Python version, ABI,
+architecture, and package version from the local [wheel index](wheel-index/tesserocr/index.html).
+The index contains remote download links, not wheel binaries; uv downloads and caches
+the selected wheel automatically. `uv sync --all-extras` uses the same index.
+uv currently records the local index's absolute path in lockfile metadata, so run
+plain `uv sync --all-extras` after moving or cloning the repository to refresh that
+metadata before using `--locked`.
 
-   Pick the file that matches your setup, e.g.:
-   `tesserocr-2.11.0-cp314-cp314-win_amd64.whl` for Python 3.14 on 64-bit Windows.
+Other Python versions, architectures, and free-threaded builds not currently listed
+in the index would need compatible links added to it. Windows installation fails if no
+compatible wheel is listed, rather than attempting a source build.
 
-3. **Place the wheel** in the `wheels/` directory at the repository root:
-   ```
-   mtg_scripts/
-   └── wheels/
-       └── tesserocr-2.11.0-cp314-cp314-win_amd64.whl
-   ```
+To support a new Windows wheel, add its direct download link to the index. Keep only
+one Tesseract library variant per wheel filename: builds for Tesseract 3, 4, and 5
+share the same `tesserocr` package version and compatibility tags, so uv cannot
+select between them based on the installed Tesseract version.
 
-4. **Uncomment** the [tool.uv] and [tool.uv.sources] sections in the pyproject.toml
-
-5. **Run `uv sync --all-extras`** - `uv` will pick up the wheel automatically from that directory.
-
-> **Note:** The `wheels/` directory is git-ignored for `.whl` files, so wheels are never committed to the repository. The platform's wheel must be manually added locally.
+On Linux and other non-Windows environments, uv resolves `tesserocr>=2.11.0` from
+PyPI, which may require a source build and system Tesseract development libraries.
+To bypass the configured source explicitly, use `uv sync --extra forge --no-sources`.
 
 ## CLI entries
 
@@ -129,15 +133,6 @@ The Print Picker adapter delegates storage to this service but retains its name 
 application owns one service and shares it across backend instances; shutdown waits for active workers before closing
 the service. Mana-base uses local tag/name discovery for the standard groups and cached API searches for custom query
 groups or local misses; vanilla continues to use cached full API search.
-
-### Feature-local Workflows
-
-Phase 7 separates EDHREC acquisition from base-deck selection/output, purchase-file parsing from explicit purchase
-calculation results, and Cardmarket/CardTrader policy from their site-specific pages. Mana-base now has distinct
-acquisition, filtering, allocation, and typed recipe configuration boundaries. Forge's OCR and run configuration are
-separate from its window/match session. Print Picker's export formatting and image-download planning are headless
-helpers. Deck Exporter already had separate extraction and format renderers, so it remains in place; small `other_scripts`
-commands remain function-oriented rather than being split into unnecessary modules.
 
 ## Testing
 

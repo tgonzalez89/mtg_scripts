@@ -1,3 +1,0 @@
-# Ignore all wheel files — they are platform-specific and must be obtained locally.
-# See README for download links.
-*.whl

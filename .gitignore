@@ -18,7 +18,7 @@ share/python-wheels/
 # uv
 # ---------------------------------------------------------------------------
 .venv/
-# uv.lock is intentionally COMMITTED - do not add it here
+uv.lock
 
 # ---------------------------------------------------------------------------
 # Testing & coverage
@@ -74,6 +74,7 @@ desktop.ini
 .mpypy_cache/
 *.csv
 *.html
+!wheel-index/tesserocr/index.html
 *.json
 !.vscode/*.json
 *.txt
