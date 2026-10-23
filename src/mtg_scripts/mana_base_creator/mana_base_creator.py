@@ -119,7 +119,8 @@ def parse_arguments(argv: Sequence[str] | None = None, *, defaults: CreatorConfi
             "Mana Confluence",  # Painland
             "City of Brass",  # Painland
             "Multiversal Passage",  # Basic shockland, you choose 1 basic land type for it to be
-            "Horizon of Progress",  # Painland, tap for any color of mana that a land you control could produce, can be sacrificed to draw a card
+            "Horizon of Progress",  # Painland, tap for any color of mana that a land you control could produce,
+            # can be sacrificed to draw a card
         ],
     )
     parser.add_argument(
