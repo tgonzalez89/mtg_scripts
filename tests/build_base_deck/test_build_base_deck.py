@@ -72,7 +72,12 @@ def test_main_preserves_regular_budget_price_and_occurrence_output(
     monkeypatch.setattr(build_base_deck, "VERBOSE", False)
     output_path = tmp_path / "deck.txt"
 
-    assert build_base_deck.main(["--commander-names", "Test Commander", "--output-card-list", str(output_path)]) == 0
+    assert (
+        build_base_deck.main(
+            ["--commander-names", "Test Commander", "--price-threshold", "20", "--output-card-list", str(output_path)]
+        )
+        == 0
+    )
     assert output_path.read_text(encoding="utf-8") == (
         "# MAIN DECK\nMain Card\n\n# CONSIDERING\nAverage Only\nBudget Average Only\nBudget Only\n"
         "Popular Pick\nTest Commander\n"

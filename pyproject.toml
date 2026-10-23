@@ -19,7 +19,7 @@ authors = [
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 
 # ---------------------------------------------------------------------------
 # Project dependencies
@@ -38,11 +38,9 @@ dependencies = [
   "python-docx",
   "requests",
   "selenium",
+  "tesserocr>=2.12.0",
   "wakepy",
 ]
-
-[project.optional-dependencies]
-forge = ["tesserocr>=2.11.0"]
 
 # Dependency groups (PEP 735) - preferred modern workflow for local/dev tooling.
 # These are not published as installable extras for downstream users.
@@ -54,15 +52,6 @@ dev = [
   "ruff>=0.16.8",
   "ty>=0.0.1a8",
 ]
-
-[tool.uv.sources.tesserocr]
-index = "tesserocr-windows"
-marker = "sys_platform == 'win32'"
-
-[[tool.uv.index]]
-name = "tesserocr-windows"
-url = "./wheel-index"
-explicit = true
 
 # ---------------------------------------------------------------------------
 # Project scripts (entry points)
@@ -108,7 +97,7 @@ markers = [
 # ---------------------------------------------------------------------------
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py315"
 line-length = 120
 src = ["src"]
 
