@@ -3,11 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypedDict
-
-from curl_cffi import requests
 
 from mtg_scripts.common.json_io import write_json
 from mtg_scripts.services.moxfield import MoxfieldError, fetch_deck, normalize_moxfield_deck_id
@@ -89,17 +86,8 @@ def download_deck(deck_id: str) -> MoxfieldDeckData | None:
 
     """
     deck_id = normalize_moxfield_deck_id(deck_id)
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www.moxfield.com",
-        "Referer": f"https://www.moxfield.com/decks/{deck_id}",
-    }
     try:
-        data = fetch_deck(
-            deck_id,
-            get=partial(requests.get, headers=headers, timeout=30, impersonate="chrome"),
-            transport_errors=(requests.RequestsError,),
-        )
+        data = fetch_deck(deck_id)
         if DEBUG:
             write_json(Path("debug.json"), data, sort_keys=False)
     except MoxfieldError as error:

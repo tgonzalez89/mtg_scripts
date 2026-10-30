@@ -8,6 +8,7 @@ import pytest
 
 from mtg_scripts.calculate_to_purchase import calculate_to_purchase
 from mtg_scripts.deck_exporter import deck_exporter
+from mtg_scripts.services import moxfield
 from mtg_scripts.services.moxfield import MoxfieldError, fetch_deck, normalize_moxfield_deck_id
 
 if TYPE_CHECKING:
@@ -80,6 +81,33 @@ def test_fetch_preserves_optional_and_unknown_fields_without_caching(tmp_path: P
     assert not list(tmp_path.iterdir())
 
 
+def test_fetch_uses_shared_browser_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = _Response(_deck())
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def get(url: str, **kwargs: object) -> _Response:
+        calls.append((url, kwargs))
+        return response
+
+    monkeypatch.setattr(moxfield.requests, "get", get)
+    assert fetch_deck("example") is response.payload
+    assert response.closed
+    assert calls == [
+        (
+            "https://api.moxfield.com/v2/decks/all/example",
+            {
+                "headers": {
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": "https://www.moxfield.com",
+                    "Referer": "https://www.moxfield.com/decks/example",
+                },
+                "timeout": 30,
+                "impersonate": "chrome",
+            },
+        )
+    ]
+
+
 def test_http_failure_is_chained_and_response_is_closed() -> None:
     cause = OSError("unavailable")
     response = _Response({}, cause)
@@ -124,54 +152,37 @@ def test_empty_id_does_not_call_transport() -> None:
         fetch_deck(" ", get=lambda url: pytest.fail("transport called"))
 
 
-@pytest.mark.parametrize("transport", ["requests", "curl"])
 def test_commands_keep_transport_options_and_own_section_policies(
-    monkeypatch: pytest.MonkeyPatch, transport: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = _deck()
-    response = _Response(payload)
     calls: list[tuple[str, dict[str, object]]] = []
 
     def get(url: str, **kwargs: object) -> _Response:
         calls.append((url, kwargs))
-        return response
+        return _Response(payload)
 
-    if transport == "requests":
-        monkeypatch.setattr(calculate_to_purchase.requests, "get", get)
-        monkeypatch.setattr(calculate_to_purchase, "DEBUG_JSON", False)
-        assert calculate_to_purchase.download_deck("https://moxfield.com/decks/example/") == (
-            {"sol ring": 10, "fire // ice": 1},
-            {"arcane signet": 1},
-        )
-    else:
-        monkeypatch.setattr(deck_exporter.requests, "get", get)
-        monkeypatch.setattr(deck_exporter, "DEBUG", False)
-        data = deck_exporter.download_deck("https://moxfield.com/decks/example/")
-        assert data is payload
-        name, commanders, mainboard, sideboard, maybeboard = deck_exporter.extract_deck_sections(data)
-        assert name == "Fixture"
-        assert commanders["Sol Ring"]["quantity"] == 1
-        assert sideboard["Sol Ring"]["quantity"] == 3
-        assert maybeboard["Arcane Signet"]["quantity"] == 1
-        assert deck_exporter.format_card_list(mainboard) == "1 Fire // Ice\n2 Sol Ring"
-        assert mainboard["Sol Ring"] == {"quantity": 2, "layout": "normal", "set": "cmm", "cn": "123"}
-    assert response.closed
-    assert len(calls) == 1
-    url, options = calls[0]
-    assert url == "https://api.moxfield.com/v2/decks/all/example"
-    assert options["timeout"] == 30
-    if transport == "requests":
-        assert options["headers"] == {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-        }
-        assert "impersonate" not in options
-    else:
-        assert options["impersonate"] == "chrome"
-        assert options["headers"] == {
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://www.moxfield.com",
-            "Referer": "https://www.moxfield.com/decks/example",
-        }
+    monkeypatch.setattr(moxfield.requests, "get", get)
+    monkeypatch.setattr(calculate_to_purchase, "DEBUG_JSON", False)
+    assert calculate_to_purchase.download_deck("https://moxfield.com/decks/example/") == (
+        {"sol ring": 10, "fire // ice": 1},
+        {"arcane signet": 1},
+    )
+
+    monkeypatch.setattr(deck_exporter, "DEBUG", False)
+    data = deck_exporter.download_deck("https://moxfield.com/decks/example/")
+    assert data is payload
+    name, commanders, mainboard, sideboard, maybeboard = deck_exporter.extract_deck_sections(data)
+    assert name == "Fixture"
+    assert commanders["Sol Ring"]["quantity"] == 1
+    assert sideboard["Sol Ring"]["quantity"] == 3
+    assert maybeboard["Arcane Signet"]["quantity"] == 1
+    assert deck_exporter.format_card_list(mainboard) == "1 Fire // Ice\n2 Sol Ring"
+    assert mainboard["Sol Ring"] == {"quantity": 2, "layout": "normal", "set": "cmm", "cn": "123"}
+    assert [url for url, _ in calls] == [
+        "https://api.moxfield.com/v2/decks/all/example",
+        "https://api.moxfield.com/v2/decks/all/example",
+    ]
 
 
 @pytest.mark.parametrize("transport", ["requests", "curl"])
@@ -182,12 +193,12 @@ def test_command_debug_json_keeps_its_formatting_policy(
     payload = _deck()
     response = _Response(payload)
     if transport == "requests":
-        monkeypatch.setattr(calculate_to_purchase.requests, "get", lambda url, **kwargs: response)
+        monkeypatch.setattr(moxfield.requests, "get", lambda url, **kwargs: response)
         monkeypatch.setattr(calculate_to_purchase, "DEBUG_JSON", True)
         calculate_to_purchase.download_deck("example")
         destination = tmp_path / "example.json"
     else:
-        monkeypatch.setattr(deck_exporter.requests, "get", lambda url, **kwargs: response)
+        monkeypatch.setattr(moxfield.requests, "get", lambda url, **kwargs: response)
         monkeypatch.setattr(deck_exporter, "DEBUG", True)
         assert deck_exporter.download_deck("example") == payload
         destination = tmp_path / "debug.json"
@@ -199,13 +210,13 @@ def test_command_debug_json_keeps_its_formatting_policy(
 @pytest.mark.parametrize("transport", ["requests", "curl"])
 def test_commands_keep_their_http_failure_handling(monkeypatch: pytest.MonkeyPatch, transport: str) -> None:
     if transport == "requests":
-        response = _Response({}, calculate_to_purchase.requests.HTTPError("unavailable"))
-        monkeypatch.setattr(calculate_to_purchase.requests, "get", lambda url, **kwargs: response)
+        response = _Response({}, moxfield.requests.RequestsError("unavailable"))
+        monkeypatch.setattr(moxfield.requests, "get", lambda url, **kwargs: response)
         with pytest.raises(MoxfieldError, match="unavailable"):
             calculate_to_purchase.download_deck("example")
     else:
-        response = _Response({}, deck_exporter.requests.RequestsError("unavailable"))
-        monkeypatch.setattr(deck_exporter.requests, "get", lambda url, **kwargs: response)
+        response = _Response({}, moxfield.requests.RequestsError("unavailable"))
+        monkeypatch.setattr(moxfield.requests, "get", lambda url, **kwargs: response)
         assert deck_exporter.download_deck("example") is None
     assert response.closed
 
@@ -237,7 +248,7 @@ def test_response_close_failure_is_a_transport_error(monkeypatch: pytest.MonkeyP
 
 def test_exporter_retains_optional_section_and_card_metadata_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     response = _Response({"name": "Partial", "mainboard": {"Sol Ring": {"quantity": 1}}})
-    monkeypatch.setattr(deck_exporter.requests, "get", lambda url, **kwargs: response)
+    monkeypatch.setattr(moxfield.requests, "get", lambda url, **kwargs: response)
     monkeypatch.setattr(deck_exporter, "DEBUG", False)
     data = deck_exporter.download_deck("example")
     assert data is not None

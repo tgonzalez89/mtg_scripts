@@ -5,7 +5,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 from mtg_scripts.build_base_deck import build_base_deck, deck_builder
-from mtg_scripts.build_base_deck.edhrec_client import _normalize_average_decklist
+from mtg_scripts.build_base_deck.edhrec_client import _normalize_average_decklist, create_edhrec_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,21 +21,23 @@ def _card_view(name: str) -> dict[str, Any]:
 def test_main_preserves_regular_budget_price_and_occurrence_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    requested_urls: list[str] = []
+
     class FakeEDHRec:
-        def _build_nextjs_uri(
-            self, endpoint: str, _commander: str, *, theme: str | None, budget: str | None
-        ) -> tuple[tuple[str, str | None], dict[str, str | None]]:
-            return (endpoint, budget), {"theme": theme}
+        @staticmethod
+        def format_card_name(card_name: str) -> str:
+            return card_name.lower().replace(" ", "-").replace(",", "").replace("'", "")
 
-        def _get(self, uri: tuple[str, str | None], *, query_params: dict[str, str | None]) -> object:
-            return uri
+        def _get(self, uri: str) -> dict[str, Any]:
+            requested_urls.append(uri)
+            path = uri.removeprefix("https://json.edhrec.com/pages/").removesuffix(".json").split("/")
+            endpoint, _commander, *options = path
+            budget = "budget" in options
 
-        def _get_nextjs_data(self, response: tuple[str, str | None]) -> dict[str, Any]:
-            endpoint, budget = response
             if endpoint == "commanders":
                 names = (
                     ["Main Card", "Popular Pick", "Expensive Card"]
-                    if budget is None
+                    if not budget
                     else [
                         "Main Card",
                         "Budget Only",
@@ -43,7 +45,7 @@ def test_main_preserves_regular_budget_price_and_occurrence_output(
                 )
                 cardlists = [{"cardviews": [_card_view(name) for name in names]}]
                 return {"container": {"json_dict": {"cardlists": cardlists}}}
-            names = ["Main Card", "Average Only"] if budget is None else ["Main Card", "Budget Average Only"]
+            names = ["Main Card", "Average Only"] if not budget else ["Main Card", "Budget Average Only"]
             deck = {"cards": {"Other": [[name, 1] for name in names]}, "commander": ["Test Commander"]}
             return {"deck": deck}
 
@@ -82,6 +84,55 @@ def test_main_preserves_regular_budget_price_and_occurrence_output(
         "# MAIN DECK\nMain Card\n\n# CONSIDERING\nAverage Only\nBudget Average Only\nBudget Only\n"
         "Popular Pick\nTest Commander\n"
     )
+    assert requested_urls == [
+        "https://json.edhrec.com/pages/commanders/test-commander.json",
+        "https://json.edhrec.com/pages/commanders/test-commander/budget.json",
+        "https://json.edhrec.com/pages/average-decks/test-commander.json",
+        "https://json.edhrec.com/pages/average-decks/test-commander/budget.json",
+    ]
+
+
+def test_edhrec_client_batches_card_queries_and_uses_commander_front_face(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_batches: list[list[str]] = []
+    requested_urls: list[str] = []
+
+    class FakeEDHRec:
+        @staticmethod
+        def format_card_name(card_name: str) -> str:
+            return card_name.lower().replace(" ", "-").replace(",", "").replace("'", "")
+
+        def _get(self, uri: str) -> dict[str, str]:
+            requested_urls.append(uri)
+            return {"url": uri}
+
+        def get_card_list(self, names: list[str]) -> dict[str, Any]:
+            requested_batches.append(names)
+            return {"cards": {name.lower(): {"name": name} for name in names}}
+
+    def identity_cache(function: Callable[..., Any]) -> Callable[..., Any]:
+        return function
+
+    fake_client_module = ModuleType("pyedhrec")
+    fake_cache_module = ModuleType("pyedhrec.caching")
+    fake_client_module.__dict__["EDHRec"] = FakeEDHRec
+    fake_cache_module.__dict__["commander_cache"] = identity_cache
+    fake_cache_module.__dict__["average_deck_cache"] = identity_cache
+    fake_client_module.__dict__["caching"] = fake_cache_module
+    monkeypatch.setitem(sys.modules, "pyedhrec", fake_client_module)
+    monkeypatch.setitem(sys.modules, "pyedhrec.caching", fake_cache_module)
+
+    client = create_edhrec_client()
+    card_names = [f"Card {index}" for index in range(301)]
+
+    result = client.get_card_list(card_names)
+    commander = client.get_commander_data("Heliod, the Radiant Dawn // Heliod, the Warped Eclipse")
+
+    assert [len(batch) for batch in requested_batches] == [300, 1]
+    assert len(result["cards"]) == len(card_names)
+    assert commander == {"url": "https://json.edhrec.com/pages/commanders/heliod-the-radiant-dawn.json"}
+    assert requested_urls == [commander["url"]]
 
 
 def test_lift_threshold_accepts_values_above_one() -> None:

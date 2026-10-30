@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import closing
 from typing import TYPE_CHECKING, Final, NotRequired, Protocol, TypedDict, TypeIs, cast
 
+from curl_cffi import requests
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -37,11 +39,11 @@ class MoxfieldError(RuntimeError):
 
 
 class MoxfieldResponse(Protocol):
-    def raise_for_status(self) -> None: ...
+    def raise_for_status(self) -> object: ...
 
     def json(self) -> object: ...
 
-    def close(self) -> None: ...
+    def close(self) -> object: ...
 
 
 def normalize_moxfield_deck_id(deck_id: str) -> str:
@@ -89,15 +91,27 @@ def _parse_deck(payload: object) -> MoxfieldDeckData:
 def fetch_deck(
     deck_id: str,
     *,
-    get: Callable[[str], MoxfieldResponse],
-    transport_errors: tuple[type[Exception], ...] = (OSError,),
+    get: Callable[[str], MoxfieldResponse] | None = None,
+    transport_errors: tuple[type[Exception], ...] = (OSError, requests.RequestsError),
 ) -> MoxfieldDeckData:
     normalized_id = normalize_moxfield_deck_id(deck_id)
     if not normalized_id:
         message = "Moxfield deck ID must not be empty."
         raise MoxfieldError(message)
+    request_get = get
+    if request_get is None:
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.moxfield.com",
+            "Referer": f"https://www.moxfield.com/decks/{normalized_id}",
+        }
+
+        def default_get(url: str) -> MoxfieldResponse:
+            return requests.get(url, headers=headers, timeout=30, impersonate="chrome")
+
+        request_get = default_get
     try:
-        with closing(get(MOXFIELD_API_URL + normalized_id)) as response:
+        with closing(request_get(MOXFIELD_API_URL + normalized_id)) as response:
             response.raise_for_status()
             return _parse_deck(response.json())
     except transport_errors as error:

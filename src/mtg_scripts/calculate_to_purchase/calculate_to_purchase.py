@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
-
-import requests
 
 from mtg_scripts.common.json_io import write_json
 from mtg_scripts.services.moxfield import fetch_deck, normalize_moxfield_deck_id
@@ -118,12 +115,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def download_deck(deck_id: str) -> tuple[dict[str, int], dict[str, int]]:
     deck_id = normalize_moxfield_deck_id(deck_id)
-    headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"}
-    data = fetch_deck(
-        deck_id,
-        get=partial(requests.get, headers=headers, timeout=30),
-        transport_errors=(requests.RequestException,),
-    )
+    data = fetch_deck(deck_id)
     if DEBUG_JSON:
         write_json(Path(deck_id + ".json"), data)
     deck: dict[str, int] = {

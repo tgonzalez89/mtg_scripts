@@ -74,7 +74,7 @@ def parse_arguments(argv: Sequence[str] | None = None, *, defaults: CreatorConfi
             "otag:cycle-bondland",  # Untapped if >=2 opponents
             "otag:cycle-triple-tapland",  # Cheap triomes
             "otag:cycle-painland",  # Tap for {C}, dual for 1 damage
-            "otag:cycle-soc-turbulent-land",  # Untapped if opponents to control >=8 lands, fetchable
+            "otag:cycle-turbulent-land",  # Untapped if opponents to control >=8 lands, fetchable
             "otag:cycle-slowland",  # Untapped if >=2 other lands
             "otag:cycle-fastland",  # Untapped if <=2 other lands
             "otag:cycle-verge",  # Tap for one color, for the other if control one of the two basic types
