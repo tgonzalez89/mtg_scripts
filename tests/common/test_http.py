@@ -124,6 +124,18 @@ def test_get_retries_429_honors_retry_after_and_closes_response() -> None:
     assert not session.closed
 
 
+def test_get_retries_429_waits_rate_limited_delay_beyond_max_delay_and_reports_retry() -> None:
+    session = _Session([_Response(429), _Response(200, payload={"ok": True})])
+    sleeps: list[float] = []
+    retries: list[tuple[str, int | None, float]] = []
+    client = _client(session, retries=1, max_delay=2, jitter=0, sleep=sleeps.append)
+    client.rate_limited_delay = 30
+    client.on_retry = lambda url, status, delay: retries.append((url, status, delay))
+    assert client.get_json("https://example.test/cards") == {"ok": True}
+    assert sleeps == [30]
+    assert retries == [("https://example.test/cards", 429, 30)]
+
+
 def test_get_retries_transient_transport_errors_with_bounded_backoff() -> None:
     session = _Session([requests.Timeout("slow"), _Response(200, payload=[1])])
     sleeps: list[float] = []

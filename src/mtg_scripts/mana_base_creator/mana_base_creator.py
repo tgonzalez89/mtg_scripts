@@ -3,7 +3,7 @@ import argparse
 import sys
 from collections.abc import Sequence  # noqa: TC003
 
-from mtg_scripts.services.scryfall import ScryfallService
+from mtg_scripts.services.scryfall import ScryfallService, TerminalProgressIndicator
 
 from .allocation import (
     add_land_groups as _add_land_groups,
@@ -194,7 +194,7 @@ def _run(config: CreatorConfig) -> None:
         max_price_specific_lands=config.max_price_specific_lands,
         allow_off_color_lands=config.allow_off_color_lands,
     )
-    with ScryfallService(allow_stale_data=config.allow_stale_data) as service:
+    with ScryfallService(allow_stale_data=config.allow_stale_data, progress=TerminalProgressIndicator()) as service:
         groups_cards, specific_lands_cards = _filter_candidates(config, filter_config, service)
     limits = ManaBaseLimits(config.colors, config.budget, config.total_lands, config.min_basics)
     lands: list[str] = []

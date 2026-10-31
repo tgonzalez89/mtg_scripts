@@ -33,14 +33,9 @@ def should_remove_fetchland(
     service: ScryfallService | None = None,
 ) -> bool:
     if not bool(group):
-        tagged_cards = service.cards_for_tag("fetchland") if service is not None else None
-        if tagged_cards is None or len(tagged_cards) == 0:
-            query = f'game:paper legal:commander order:usd dir:asc otag:fetchland !"{card.name}"'
-            data = query_scryfall(query, service)
-            is_fetchland = bool(data and data[0].name == card.name)
-        else:
-            is_fetchland = any(tagged.name.casefold() == card.name.casefold() for tagged in tagged_cards)
-        if is_fetchland:
+        query = f'game:paper legal:commander order:usd dir:asc otag:fetchland !"{card.name}"'
+        data = query_scryfall(query, service)
+        if any(match.name.casefold() == card.name.casefold() for match in data):
             group = "fetchland"
 
     if not _is_fetchland_group(group):

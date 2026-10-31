@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 _USE_DEFAULT_LIMITER = object()
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+HTTP_TOO_MANY_REQUESTS = 429
+
+type RetryCallback = Callable[[str, int | None, float], None]
 
 
 class HttpRequestError(RuntimeError):
@@ -98,6 +101,8 @@ class JsonHttpClient:
         json_cache: JsonDiskCache | None = None,
         bytes_cache: BytesDiskCache | None = None,
         json_max_age: float | None = None,
+        rate_limited_delay: float | None = None,
+        on_retry: RetryCallback | None = None,
     ) -> None:
         if (
             retries < 0
@@ -124,6 +129,9 @@ class JsonHttpClient:
         self.json_cache = json_cache
         self.bytes_cache = bytes_cache
         self.json_max_age = json_max_age
+        # Minimum wait after HTTP 429, not capped by `max_delay` (Scryfall locks clients out for 30s).
+        self.rate_limited_delay = rate_limited_delay
+        self.on_retry = on_retry
         self._session_lock = threading.Lock()
 
     def close(self) -> None:
@@ -293,13 +301,17 @@ class JsonHttpClient:
                 if not retryable or attempt + 1 == max_attempts:
                     message = f"{method} {url} failed: {error}"
                     raise HttpRequestError(message) from error
-                self._sleep(self._retry_delay(attempt, None))
+                self._wait_before_retry(url, None, self._retry_delay(attempt, None))
                 continue
 
             if response.status_code in RETRYABLE_STATUS_CODES and attempt + 1 < max_attempts:
                 retry_after = _retry_after_seconds(response.headers.get("Retry-After"), self._clock())
+                status_code = response.status_code
                 response.close()
-                self._sleep(self._retry_delay(attempt, retry_after))
+                delay = self._retry_delay(attempt, retry_after)
+                if status_code == HTTP_TOO_MANY_REQUESTS and self.rate_limited_delay is not None:
+                    delay = max(delay, self.rate_limited_delay)
+                self._wait_before_retry(url, status_code, delay)
                 continue
             try:
                 response.raise_for_status()
@@ -311,6 +323,11 @@ class JsonHttpClient:
                 return response
         message = "HTTP retry loop exited unexpectedly."
         raise AssertionError(message)
+
+    def _wait_before_retry(self, url: str, status_code: int | None, delay: float) -> None:
+        if self.on_retry is not None:
+            self.on_retry(url, status_code, delay)
+        self._sleep(delay)
 
     def _retry_delay(self, attempt: int, retry_after: float | None) -> float:
         backoff = min(self.base_delay * 2**attempt, self.max_delay)

@@ -59,7 +59,7 @@ def test_fetch_uses_shared_service_preserving_query_order_and_fields(
         "prices": {"usd": "0.25"},
     }
     service = _FakeService(payload)
-    monkeypatch.setattr(vanilla, "ScryfallService", lambda: service, raising=False)
+    monkeypatch.setattr(vanilla, "ScryfallService", lambda **_: service, raising=False)
 
     assert vanilla.fetch_scryfall_cards('name:"Vanilla Giant"') == [_card(payload)]
     assert service.calls == [('name:"Vanilla Giant"', {"order": "cmc", "direction": "asc"})]

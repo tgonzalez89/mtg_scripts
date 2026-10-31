@@ -266,7 +266,6 @@ def test_print_picker_two_deck_memory_lifecycle(tmp_path: Path) -> None:
         _snapshot("riftbound_import_same_app")
         gc.collect()
         assert old_backend_ref() is None
-        assert not app.backend.supports_progress
 
         app.destroy()
         app = None

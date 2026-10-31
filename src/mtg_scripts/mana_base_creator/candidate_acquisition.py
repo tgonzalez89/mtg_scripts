@@ -6,9 +6,8 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from mtg_scripts.services.scryfall import ScryfallService
-from mtg_scripts.services.scryfall.store import normalize_name
 
-from .land_filter import get_price, process_cards
+from .land_filter import process_cards
 from .scryfall import SCRYFALL_BASE_QUERY, query_scryfall
 
 if TYPE_CHECKING:
@@ -27,18 +26,10 @@ def populate_cards_from_groups(
         with ScryfallService() as owned_service:
             return populate_cards_from_groups(groups, price_source, owned_service)
 
-    cards_per_group: dict[str, list[ScryfallCard]] = {}
-    for group in groups:
-        if _is_simple_oracle_tag(group):
-            tagged_cards = service.cards_for_tag(group)
-            if tagged_cards is not None:
-                local_candidates = _cheapest_local_printings(tagged_cards, price_source)
-                if local_candidates is not None:
-                    cards_per_group[group] = local_candidates
-                    continue
-        query = f"{SCRYFALL_BASE_QUERY.format(price_source=price_source)} {group}"
-        cards_per_group[group] = query_scryfall(query, service)
-    return cards_per_group
+    return {
+        group: query_scryfall(f"{SCRYFALL_BASE_QUERY.format(price_source=price_source)} {group}", service)
+        for group in groups
+    }
 
 
 def populate_cards_from_names(
@@ -49,47 +40,12 @@ def populate_cards_from_names(
             return populate_cards_from_names(names, price_source, owned_service)
 
     cards: list[ScryfallCard] = []
-    local_matches = service.resolve_names(names, include_flavor=False)
     for name in names:
-        matching_printings = [
-            match.card
-            for match in local_matches.get(normalize_name(name), [])
-            if match.card.name.casefold() == name.casefold()
-        ]
-        local_result = _cheapest_local_printings(matching_printings, price_source)
-        if local_result is not None and len(local_result) > 0:
-            cards.append(local_result[0])
-            continue
         query = f'{SCRYFALL_BASE_QUERY.format(price_source=price_source)} !"{name}"'
         data = query_scryfall(query, service)
         with suppress(StopIteration):
             cards.append(next(card for card in data if card.name.casefold() == name.casefold()))
     return cards
-
-
-def _is_simple_oracle_tag(group: str) -> bool:
-    return group.startswith("otag:") and " " not in group
-
-
-def _cheapest_local_printings(cards: Sequence[ScryfallCard], price_source: str) -> list[ScryfallCard] | None:
-    cheapest_by_oracle: dict[str, tuple[float, ScryfallCard]] = {}
-    for card in cards:
-        if "paper" not in card.games or not card.commander_legal:
-            continue
-        prices = card.prices
-        has_price = prices.get(price_source) is not None or any(
-            name.startswith(price_source) and price is not None for name, price in prices.items()
-        )
-        if not has_price:
-            return None
-        price = get_price(price_source, card)
-        current = cheapest_by_oracle.get(card.oracle_id)
-        if current is None or price < current[0]:
-            cheapest_by_oracle[card.oracle_id] = (price, card)
-    if not cheapest_by_oracle:
-        return None
-    ordered = sorted(cheapest_by_oracle.values(), key=lambda candidate: candidate[0])
-    return [card for _, card in ordered]
 
 
 def filter_candidates(

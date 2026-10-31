@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Final, TypedDict, cast, override
 from urllib.parse import quote_plus
 
-from .card_backend import CardBackend, ProgressCallback
+from .card_backend import CardBackend
 from .models import CardFace, CardPrint, DeckEntry, PrintQuery, Resolution, matches_set_code
 
 if TYPE_CHECKING:
@@ -83,8 +83,7 @@ class RiftCodexBackend(CardBackend):
     # -- resolution ---------------------------------------------------------
 
     @override
-    def resolve(self, entries: Sequence[DeckEntry], progress: ProgressCallback | None = None) -> list[Resolution]:
-        _ = progress
+    def resolve(self, entries: Sequence[DeckEntry]) -> list[Resolution]:
         if not entries:
             return []
         with ThreadPoolExecutor(max_workers=min(MAX_RESOLVE_WORKERS, len(entries))) as executor:
@@ -109,9 +108,8 @@ class RiftCodexBackend(CardBackend):
         return Resolution(entry=entry, card=card)
 
     @override
-    def printings_of(self, card: CardPrint, progress: ProgressCallback | None = None) -> Sequence[CardPrint]:
+    def printings_of(self, card: CardPrint) -> Sequence[CardPrint]:
         """Return exact and fuzzy printings associated with a RiftBound card."""
-        _ = progress
         names = self._printing_names(card)
         exact_items = [item for name in names for item in self._search_exact(name)]
         base_names = _base_names(exact_items)

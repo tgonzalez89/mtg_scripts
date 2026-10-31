@@ -25,8 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Offline/stale search policies, one-hour negative-result caching, and provider service/store fixtures.
 - Offline Phase 6 consumer fixtures for mana-base query/price semantics, vanilla ranking, and Scryfall service ownership.
 - Phase 7 offline fixtures for base-deck output, purchase accounting, CardTrader policy, browser cleanup, Forge runtime config/OCR, mana-base recipe config, and Print Picker exports.
+- Scryfall service progress indicators (`ProgressIndicator` ABC with terminal and Tk implementations) showing the downloaded file, transfer speed, a progress bar, database builds, API queries, and rate-limit waits.
+- Local-first Scryfall search: a supported subset of the query syntax (`game:`, `legal:commander`, `t:`, `o:`, `otag:`, `is:mdfc`, `produces:`, `id:`/`commander:`, `!"name"`, negation, `order:`/`dir:`/`unique:`) is answered from the bulk database (schema v9 adds layout, produced mana, and face oracle text).
 
 ### Changed
+- `/cards/search` API calls are throttled to 2 per second and HTTP 429 responses wait out Scryfall's 30-second lockout before retrying.
+- Mana-base creator and Print Picker no longer carry their own progress/local-lookup logic; they pick an indicator and rely on the service.
 - Organize existing tests under CLI, mana-base creator, and Print Picker directories without changing application behavior.
 - Derive CLI adapter expectations from package metadata and correct the documented command list.
 - Complete the RiftCodex set-date fixture so its set-mismatch test no longer requests live API data.

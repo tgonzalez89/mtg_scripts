@@ -15,7 +15,7 @@ from mtg_scripts.mana_base_creator.models import CardFilterConfig
 from mtg_scripts.services.scryfall.store import card_from_payload
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
     from mtg_scripts.mana_base_creator.models import CreatorConfig
     from mtg_scripts.services.scryfall import ScryfallService
@@ -24,11 +24,6 @@ if TYPE_CHECKING:
 
 def _card(payload: Mapping[str, Any]) -> ScryfallCard:
     return card_from_payload({"id": payload.get("name", "test"), **payload})
-
-
-class _NameMatch:
-    def __init__(self, card: ScryfallCard) -> None:
-        self.card = card
 
 
 class _SearchResult:
@@ -40,14 +35,6 @@ class _SearchService:
     def __init__(self, responses: dict[str, list[Mapping[str, Any]]]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, bool]] = []
-        self.tags: dict[str, list[ScryfallCard]] = {}
-        self.names: dict[str, list[ScryfallCard]] = {}
-
-    def cards_for_tag(self, slug: str) -> list[ScryfallCard] | None:
-        return self.tags.get(slug)
-
-    def resolve_names(self, names: Sequence[str], *, include_flavor: bool = True) -> dict[str, list[_NameMatch]]:
-        return {name.casefold(): [_NameMatch(card) for card in self.names.get(name.casefold(), [])] for name in names}
 
     def search(self, query: str, *, price_sensitive: bool = False) -> _SearchResult:
         self.calls.append((query, price_sensitive))
@@ -151,88 +138,6 @@ def test_group_queries_keep_oracle_tag_legality_and_price_ordering() -> None:
     assert service.calls == [(query, True)]
 
 
-def test_oracle_tag_groups_filter_local_printings_and_pick_cheapest_per_oracle() -> None:
-    service = _SearchService({})
-    service.tags["otag:cycle-fetchland"] = [
-        _card(
-            {
-                "name": "Fabled Passage",
-                "oracle_id": "fetch-1",
-                "games": ["paper"],
-                "legalities": {"commander": "legal"},
-                "prices": {"eur": "8.00"},
-            }
-        ),
-        _card(
-            {
-                "name": "Fabled Passage",
-                "oracle_id": "fetch-1",
-                "games": ["paper"],
-                "legalities": {"commander": "legal"},
-                "prices": {"eur": "3.00"},
-            }
-        ),
-        _card(
-            {
-                "name": "Digital Fetch",
-                "oracle_id": "fetch-2",
-                "games": ["arena"],
-                "legalities": {"commander": "legal"},
-                "prices": {"eur": "0.01"},
-            }
-        ),
-        _card(
-            {
-                "name": "Banned Fetch",
-                "oracle_id": "fetch-3",
-                "games": ["paper"],
-                "legalities": {"commander": "banned"},
-                "prices": {"eur": "0.02"},
-            }
-        ),
-    ]
-
-    groups = candidate_acquisition.populate_cards_from_groups(
-        ["otag:cycle-fetchland"], "eur", cast("ScryfallService", service)
-    )
-
-    assert [card.name for card in groups["otag:cycle-fetchland"]] == ["Fabled Passage"]
-    assert groups["otag:cycle-fetchland"][0].prices["eur"] == "3.00"
-    assert service.calls == []
-
-
-@pytest.mark.parametrize(
-    "local_cards",
-    [
-        [],
-        [
-            _card(
-                {
-                    "name": "Fetch Without Price",
-                    "oracle_id": "fetch-missing-price",
-                    "games": ["paper"],
-                    "legalities": {"commander": "legal"},
-                    "prices": {"usd": None},
-                }
-            )
-        ],
-    ],
-)
-def test_empty_or_incomplete_local_tag_data_falls_back_to_api(
-    local_cards: list[ScryfallCard],
-) -> None:
-    group = "otag:cycle-fetchland"
-    query = f"game:paper legal:commander order:usd dir:asc {group}"
-    api_card = {"name": "API Fetchland", "oracle_text": "", "prices": {"usd": "2.00"}}
-    service = _SearchService({query: [api_card]})
-    service.tags[group] = local_cards
-
-    groups = candidate_acquisition.populate_cards_from_groups([group], "usd", cast("ScryfallService", service))
-
-    assert [card.name for card in groups[group]] == ["API Fetchland"]
-    assert service.calls == [(query, True)]
-
-
 def test_exact_name_selection_uses_first_price_ordered_matching_printing() -> None:
     query = 'game:paper legal:commander order:eur dir:asc !"mana confluence"'
     cheap = {"name": "Mana Confluence", "oracle_text": "", "prices": {"eur": "4.00"}}
@@ -245,35 +150,6 @@ def test_exact_name_selection_uses_first_price_ordered_matching_printing() -> No
 
     assert cards == [_card(cheap)]
     assert service.calls == [(query, True)]
-
-
-def test_specific_names_use_batched_local_name_lookup_before_api() -> None:
-    service = _SearchService({})
-    service.names["command tower"] = [
-        _card(
-            {
-                "name": "Command Tower",
-                "oracle_id": "tower-1",
-                "games": ["paper"],
-                "legalities": {"commander": "legal"},
-                "prices": {"usd": "3.00"},
-            }
-        ),
-        _card(
-            {
-                "name": "Command Tower",
-                "oracle_id": "tower-1",
-                "games": ["paper"],
-                "legalities": {"commander": "legal"},
-                "prices": {"usd": "1.00"},
-            }
-        ),
-    ]
-
-    cards = candidate_acquisition.populate_cards_from_names(["command tower"], "usd", cast("ScryfallService", service))
-
-    assert [card.prices["usd"] for card in cards] == ["1.00"]
-    assert service.calls == []
 
 
 def test_unclassified_fetchland_still_uses_oracle_tag_membership_query() -> None:

@@ -6,7 +6,6 @@ from tkinter import messagebox
 from typing import TYPE_CHECKING, override
 
 from .card_grid import CardGrid
-from .gui_dialogs import ProgressDialog
 from .ui_queue import UiQueue
 from .view_model import CardSlot, printing_slot
 
@@ -41,7 +40,6 @@ class PrintingChooser(tk.Toplevel):
         self._ui = UiQueue(self)
         self._ui.start()
         self.executor = ThreadPoolExecutor(max_workers=8)
-        self.progress_dialog = ProgressDialog(self, "Loading card data") if backend.supports_progress else None
         self.card_grid = CardGrid(
             self,
             backend=backend,
@@ -61,7 +59,6 @@ class PrintingChooser(tk.Toplevel):
         on_close = self.on_close
         self.executor.shutdown(wait=True, cancel_futures=True)
         self.card_grid.destroy()
-        self.progress_dialog = None
         self.backend = None
         self.on_choose = None
         self.on_open_full_image = None
@@ -75,32 +72,17 @@ class PrintingChooser(tk.Toplevel):
         card = self.slot.display_print
         if backend is None or card is None:
             self._post(self.card_grid.set_slots, [])
-            self._post(self._close_progress)
             return
         try:
-            printings = backend.printings_of(card, self._report_progress)
+            printings = backend.printings_of(card)
             self._post(self._show_printings, printings)
         except (OSError, RuntimeError, ValueError) as error:
             self._post(self._show_error, error)
-        finally:
-            self._post(self._close_progress)
 
     def _post(self, callback: Callable[..., None], *args: object) -> None:
         """Run `callback` on the UI thread; safe to call from a worker."""
         if not self._closed:
             self._ui.post(callback, *args)
-
-    def _report_progress(self, message: str, current: int, total: int) -> None:
-        self._post(self._update_progress, message, current, total)
-
-    def _update_progress(self, message: str, current: int, total: int) -> None:
-        if self.progress_dialog is not None:
-            self.progress_dialog.update_progress(message, current, total)
-
-    def _close_progress(self) -> None:
-        if self.progress_dialog is not None:
-            self.progress_dialog.destroy()
-            self.progress_dialog = None
 
     def _show_printings(self, printings: list[CardPrint]) -> None:
         slots = [printing_slot(printing, self.slot.name) for printing in printings]

@@ -9,7 +9,6 @@ import hashlib
 import io
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
@@ -20,6 +19,8 @@ from mtg_scripts.common.cache import BytesDiskCache, CachePaths, JsonDiskCache, 
 from mtg_scripts.common.http import JsonHttpClient
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     import requests
 
     from .models import CardPrint, DeckEntry, Resolution
@@ -32,8 +33,6 @@ JSON_CACHE_MAX_AGE: Final[int] = 24 * 60 * 60
 # structurally rather than with a TypedDict.
 type JSONValue = bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"] | None
 
-type ProgressCallback = Callable[[str, int, int], None]
-
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -42,7 +41,6 @@ def _sha256(value: str) -> str:
 class CardBackend(ABC):
     """Resolves cards and composes shared HTTP/cache services with local image decoding."""
 
-    supports_progress = False
     cache_provider = "print-picker"
 
     def __init__(self, cache_dir: str | Path | None = None, session: requests.Session | None = None) -> None:
@@ -74,11 +72,11 @@ class CardBackend(ABC):
         """Parse one import line into quantity, name, and an optional print query."""
 
     @abstractmethod
-    def resolve(self, entries: Sequence[DeckEntry], progress: ProgressCallback | None = None) -> list[Resolution]:
+    def resolve(self, entries: Sequence[DeckEntry]) -> list[Resolution]:
         """Resolve import entries to printings, in input order."""
 
     @abstractmethod
-    def printings_of(self, card: CardPrint, progress: ProgressCallback | None = None) -> Sequence[CardPrint]:
+    def printings_of(self, card: CardPrint) -> Sequence[CardPrint]:
         """Return every available printing of the given card."""
 
     @staticmethod

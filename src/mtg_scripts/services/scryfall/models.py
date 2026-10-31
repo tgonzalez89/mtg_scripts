@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-
-type ProgressCallback = Callable[[str, int, int], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +36,8 @@ class ScryfallCard:
     power: str | None
     toughness: str | None
     prices: dict[str, str | None]
+    layout: str = ""
+    produced_mana: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

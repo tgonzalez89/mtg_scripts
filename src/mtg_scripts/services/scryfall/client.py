@@ -8,12 +8,15 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from mtg_scripts.common.cache import CacheRecord, JsonDiskCache, canonical_cache_key
-from mtg_scripts.common.http import HttpRequestError, JsonHttpClient
+from mtg_scripts.common.http import DiskRateLimiter, HttpRequestError, JsonHttpClient
 
 from .models import ScryfallSearchResult
+from .progress import ProgressIndicator, SilentProgressIndicator
 from .store import card_from_payload
 
 CARDS_SEARCH_URL = "https://api.scryfall.com/cards/search"
+# Scryfall hard-limits /cards/search to 2 requests per second.
+SEARCH_MIN_INTERVAL = 0.5
 SEARCH_CACHE_MAX_AGE = 24 * 60 * 60
 NEGATIVE_CACHE_MAX_AGE = 60 * 60
 SEARCH_REPRESENTATION_VERSION = 1
@@ -50,7 +53,7 @@ def validated_next_page(value: object) -> str:
 
 
 class ScryfallSearchClient:
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         http: JsonHttpClient,
         cache: JsonDiskCache,
@@ -58,12 +61,16 @@ class ScryfallSearchClient:
         clock: Callable[[], float],
         offline: bool = False,
         allow_stale_data: bool = False,
+        rate_limiter: DiskRateLimiter | None = None,
+        progress: ProgressIndicator | None = None,
     ) -> None:
         self.http = http
         self.cache = cache
         self.clock = clock
         self.offline = offline
         self.allow_stale_data = allow_stale_data
+        self.rate_limiter = rate_limiter
+        self.progress = progress if progress is not None else SilentProgressIndicator()
 
     def search(  # noqa: C901, PLR0913
         self,
@@ -125,6 +132,8 @@ class ScryfallSearchClient:
             if stale is not None and allow_stale:
                 return self._stale_snapshot(stale, query, price_sensitive=price_sensitive)
             raise
+        finally:
+            self.progress.idle()
         return self._snapshot(record, stale=False)
 
     def _negative_is_fresh(self, record: CacheRecord[object], max_age: float) -> bool:
@@ -164,7 +173,8 @@ class ScryfallSearchClient:
 
     def _fetch_complete(self, params: Mapping[str, str]) -> tuple[list[dict[str, object]], bool]:
         cards: list[dict[str, object]] = []
-        payload = self.http.get_json(CARDS_SEARCH_URL, params=params, use_cache=False)
+        self.progress.status(f"Querying the Scryfall API: {params['q']}")
+        payload = self._get(CARDS_SEARCH_URL, params)
         visited: set[str] = set()
         while True:
             if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
@@ -182,5 +192,11 @@ class ScryfallSearchClient:
                 message = "Scryfall pagination repeated a next_page URL."
                 raise ValueError(message)
             visited.add(next_page)
-            payload = self.http.get_json(next_page, use_cache=False)
+            self.progress.status(f"Querying the Scryfall API: {params['q']} (page {len(visited) + 1})")
+            payload = self._get(next_page, None)
         return cards, not cards
+
+    def _get(self, url: str, params: Mapping[str, str] | None) -> object:
+        if self.rate_limiter is None:
+            return self.http.get_json(url, params=params, use_cache=False)
+        return self.http.get_json(url, params=params, use_cache=False, rate_limiter=self.rate_limiter)

@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import TYPE_CHECKING, cast, override
 
 from mtg_scripts.services.scryfall import ScryfallService
+from mtg_scripts.services.scryfall.progress_tk import TkProgressIndicator
 
 from .card_grid import CardGrid, art_size_for
 from .exports import (
@@ -19,7 +20,7 @@ from .exports import (
     safe_filename,
 )
 from .full_image_window import FullImageWindow, ImageWindowOptions
-from .gui_dialogs import DownloadImagesDialog, ExportChoiceDialog, GameSelectionDialog, ProgressDialog
+from .gui_dialogs import DownloadImagesDialog, ExportChoiceDialog, GameSelectionDialog
 from .printing_chooser import PrintingChooser
 from .riftcodex_backend import RiftCodexBackend
 from .scrollable_zoomable_text_frame import ScrollableZoomableTextFrame
@@ -44,7 +45,8 @@ class App(tk.Tk):
         self.geometry("900x700")
         self.minsize(400, 400)
         self.state("zoomed")
-        self.scryfall_service = ScryfallService(cache_dir=self.cache_dir)
+        self.progress_indicator = TkProgressIndicator(self, title="Scryfall card data")
+        self.scryfall_service = ScryfallService(cache_dir=self.cache_dir, progress=self.progress_indicator)
         self.backend: CardBackend = ScryfallBackend(cache_dir=self.cache_dir, service=self.scryfall_service)
         self._backend_factories: dict[str, Callable[[], CardBackend]] = {
             "Magic: The Gathering": lambda: ScryfallBackend(cache_dir=self.cache_dir, service=self.scryfall_service),
@@ -54,7 +56,6 @@ class App(tk.Tk):
         self.executor = ThreadPoolExecutor(max_workers=8)
         self._worker_futures: set[Future[None]] = set()
         self.slots: list[CardSlot] = []
-        self.progress_dialog: ProgressDialog | None = None
         self.printing_chooser: PrintingChooser | None = None
         self.full_image_window: FullImageWindow | None = None
         self._ui = UiQueue(self)
@@ -66,7 +67,7 @@ class App(tk.Tk):
         self._ui.stop()
         self._close_full_image()
         self._close_printing_chooser()
-        self._close_progress()
+        self.progress_indicator.close()
         if self.card_grid.winfo_exists():
             self.card_grid.destroy()
         self.executor.shutdown(wait=True, cancel_futures=True)
@@ -136,8 +137,6 @@ class App(tk.Tk):
         for slot in self.slots:
             slot.info_loading = True
         self.import_button.configure(state="disabled")
-        if self.backend.supports_progress:
-            self._start_progress("Loading card data")
         self.card_grid.load_slots(self.slots, self._resolve_slots, self._load_slot_images)
 
     def _choose_game(self) -> str | None:
@@ -151,11 +150,10 @@ class App(tk.Tk):
     def _resolve_slots(self, slots: list[CardSlot]) -> None:
         """Resolve every slot in one batch, on a worker thread."""
         try:
-            resolutions = self.backend.resolve([slot.entry for slot in slots], self._report_progress)
+            resolutions = self.backend.resolve([slot.entry for slot in slots])
         finally:
             for slot in slots:
                 slot.info_loading = False
-            self._finish_progress()
         for slot, resolution in zip(slots, resolutions, strict=True):
             slot.resolved = resolution.card
             slot.error = resolution.error or (None if resolution.card else "Card not found")
@@ -168,29 +166,6 @@ class App(tk.Tk):
         if card is None:
             return
         slot.images = self.backend.load_thumbnails(card, size)
-
-    # -- progress -----------------------------------------------------------
-
-    def _start_progress(self, title: str) -> None:
-        self._close_progress()
-        self.progress_dialog = ProgressDialog(self, title)
-
-    def _report_progress(self, message: str, current: int, total: int) -> None:
-        """Report progress from a backend worker thread."""
-        self._ui.post(self._update_progress, message, current, total)
-
-    def _update_progress(self, message: str, current: int, total: int) -> None:
-        if self.progress_dialog is not None:
-            self.progress_dialog.update_progress(message, current, total)
-
-    def _finish_progress(self) -> None:
-        if self.progress_dialog is not None:
-            self._ui.post(self._close_progress)
-
-    def _close_progress(self) -> None:
-        if self.progress_dialog is not None:
-            self.progress_dialog.destroy()
-            self.progress_dialog = None
 
     # -- windows ------------------------------------------------------------
 

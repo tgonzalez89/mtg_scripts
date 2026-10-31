@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 
     import requests
 
-    from mtg_scripts.services.scryfall.models import ProgressCallback, ScryfallCard, ScryfallNameMatch
+    from mtg_scripts.services.scryfall.models import ScryfallCard, ScryfallNameMatch
+    from mtg_scripts.services.scryfall.progress import ProgressIndicator
     from mtg_scripts.services.scryfall.store import CardStore
 
 USER_AGENT: Final[str] = "mtg-print-picker/1.0 (contact: local)"
@@ -72,7 +73,6 @@ def to_print(card: ScryfallCard) -> ScryfallPrint:
 
 
 class ScryfallBackend(CardBackend):
-    supports_progress = True
     cache_provider = "scryfall"
 
     def __init__(
@@ -81,10 +81,11 @@ class ScryfallBackend(CardBackend):
         session: requests.Session | None = None,
         *,
         service: ScryfallService | None = None,
+        progress: ProgressIndicator | None = None,
     ) -> None:
         super().__init__(cache_dir, session)
         self._owns_service = service is None
-        self.service = service or ScryfallService(cache_dir=cache_dir, http_client=self.http)
+        self.service = service or ScryfallService(cache_dir=cache_dir, http_client=self.http, progress=progress)
 
     @property
     @override
@@ -145,10 +146,10 @@ class ScryfallBackend(CardBackend):
     # -- resolution ---------------------------------------------------------
 
     @override
-    def resolve(self, entries: Sequence[DeckEntry], progress: ProgressCallback | None = None) -> list[Resolution]:
+    def resolve(self, entries: Sequence[DeckEntry]) -> list[Resolution]:
         if not entries:
             return []
-        store = self._card_store(progress)
+        store = self._card_store()
         # One query for the whole deck, rather than one per line.
         candidates = store.by_name([entry.name for entry in entries])
         resolutions = [Resolution(entry=entry, card=self._select(candidates, entry)) for entry in entries]
@@ -206,13 +207,13 @@ class ScryfallBackend(CardBackend):
         return _best(nonfoil_matches or identity_matches)
 
     @override
-    def printings_of(self, card: CardPrint, progress: ProgressCallback | None = None) -> Sequence[CardPrint]:
-        return tuple(to_print(printing) for printing in self._card_store(progress).printings_of(card.card_key))
+    def printings_of(self, card: CardPrint) -> Sequence[CardPrint]:
+        return tuple(to_print(printing) for printing in self._card_store().printings_of(card.card_key))
 
     # -- store lifecycle ----------------------------------------------------
 
-    def _card_store(self, progress: ProgressCallback | None = None, *, force_refresh: bool = False) -> CardStore:
-        return self.service.get_store(progress, force_refresh=force_refresh)
+    def _card_store(self, *, force_refresh: bool = False) -> CardStore:
+        return self.service.get_store(force_refresh=force_refresh)
 
     @override
     def close(self) -> None:
@@ -225,9 +226,9 @@ class ScryfallBackend(CardBackend):
         super().clear_json_cache()
         self.service.clear_search_cache()
 
-    def refresh_database(self, progress: ProgressCallback | None = None) -> CardStore:
+    def refresh_database(self) -> CardStore:
         """Refresh Scryfall metadata and publish a new store generation if available."""
-        return self.service.refresh_bulk(progress)
+        return self.service.refresh_bulk()
 
 
 def _select_by_name_only(matches: list[NameMatch]) -> ScryfallPrint | None:
@@ -290,8 +291,3 @@ def _is_nonplayable(card: ScryfallPrint) -> bool:
     name lookup over the real card.
     """
     return card.is_token or card.set_type in NONPLAYABLE_SET_TYPES
-
-
-def _report_progress(progress: ProgressCallback | None, message: str, current: int, total: int) -> None:
-    if progress:
-        progress(message, current, total)

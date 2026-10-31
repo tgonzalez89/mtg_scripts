@@ -12,6 +12,7 @@ import uuid
 import warnings
 from contextlib import suppress
 from typing import TYPE_CHECKING, TypedDict, cast
+from urllib.parse import urlsplit
 
 from filelock import FileLock
 
@@ -19,13 +20,12 @@ from mtg_scripts.common.cache import CacheError, CachePaths, JsonDiskCache, cano
 from mtg_scripts.common.http import HttpRequestError, JsonHttpClient
 
 from . import store
+from .progress import ProgressIndicator, SilentProgressIndicator
 from .store import CardStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    from .models import ProgressCallback
 
 BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
 REQUIRED_BULK_TYPES = ("oracle_cards", "default_cards")
@@ -46,7 +46,7 @@ class BulkDataResponse(TypedDict, total=False):
 class ScryfallBulkData:
     """Lazily publish a schema-compatible local database generation."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         paths: CachePaths,
         http: JsonHttpClient,
@@ -54,6 +54,7 @@ class ScryfallBulkData:
         legacy_cache_dir: Path | None = None,
         offline: bool = False,
         clock: Callable[[], float],
+        progress: ProgressIndicator | None = None,
     ) -> None:
         self.bulk_dir = paths.namespace("scryfall", "bulk")
         self.metadata_cache_dir = paths.namespace("scryfall", "metadata")
@@ -63,6 +64,7 @@ class ScryfallBulkData:
         self.legacy_cache_dir = legacy_cache_dir
         self.offline = offline
         self._clock = clock
+        self.progress = progress if progress is not None else SilentProgressIndicator()
         self._lock = threading.RLock()
         self._store: CardStore | None = None
         self._retired: list[CardStore] = []
@@ -72,74 +74,75 @@ class ScryfallBulkData:
         with self._lock:
             return self._store
 
-    def get_store(
-        self,
-        progress: ProgressCallback | None = None,
-        *,
-        force_refresh: bool = False,
-    ) -> CardStore:
+    def get_store(self, *, force_refresh: bool = False) -> CardStore:
         with self._lock:
             if self._store is not None and not force_refresh:
                 return self._store
-            with FileLock(str(self.bulk_dir / ".build.lock")):
-                self._migrate_legacy_store()
-                if self.offline:
+            try:
+                return self._open_store(force_refresh=force_refresh)
+            finally:
+                self.progress.idle()
+
+    def _open_store(self, *, force_refresh: bool) -> CardStore:
+        with FileLock(str(self.bulk_dir / ".build.lock")):
+            self._migrate_legacy_store()
+            if self.offline:
+                fallback = self._latest_usable_generation()
+                if fallback is None:
+                    message = "Offline Scryfall mode has no compatible local card database; run once online first."
+                    raise CacheError(message)
+                warnings.warn(
+                    f"Using cached Scryfall database {fallback.name} in offline mode.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                path = fallback
+            else:
+                try:
+                    metadata = self._load_metadata(force_refresh=force_refresh)
+                    uris = [str(metadata[bulk_type]["jsonl_download_uri"]) for bulk_type in REQUIRED_BULK_TYPES]
+                    tags_entry = metadata.get(ORACLE_TAGS_TYPE)
+                    tags_uri = str(tags_entry["jsonl_download_uri"]) if tags_entry is not None else None
+                    version_input = "\n".join([*uris, *([tags_uri] if tags_uri is not None else [])])
+                    version = hashlib.sha256(version_input.encode("utf-8")).hexdigest()[:16]
+                    path = self._usable_generation(version)
+                    if path is None:
+                        canonical = store.store_path(self.bulk_dir, version)
+                        path = (
+                            canonical
+                            if not canonical.exists()
+                            else self.bulk_dir
+                            / (f"cards-{version}-v{store.STORE_SCHEMA_VERSION}-rebuild-{uuid.uuid4().hex}.db")
+                        )
+                        self._build_store(path, version, uris, tags_uri, metadata)
+                    _require_valid_store(path)
+                except (
+                    CacheError,
+                    HttpRequestError,
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    sqlite3.Error,
+                ) as error:
                     fallback = self._latest_usable_generation()
                     if fallback is None:
-                        message = "Offline Scryfall mode has no compatible local card database; run once online first."
-                        raise CacheError(message)
+                        raise
                     warnings.warn(
-                        f"Using cached Scryfall database {fallback.name} in offline mode.",
+                        f"Using cached Scryfall database {fallback.name} after refresh failed: {error}",
                         RuntimeWarning,
                         stacklevel=2,
                     )
                     path = fallback
-                else:
-                    try:
-                        metadata = self._load_metadata(force_refresh=force_refresh)
-                        uris = [str(metadata[bulk_type]["jsonl_download_uri"]) for bulk_type in REQUIRED_BULK_TYPES]
-                        tags_entry = metadata.get(ORACLE_TAGS_TYPE)
-                        tags_uri = str(tags_entry["jsonl_download_uri"]) if tags_entry is not None else None
-                        version_input = "\n".join([*uris, *([tags_uri] if tags_uri is not None else [])])
-                        version = hashlib.sha256(version_input.encode("utf-8")).hexdigest()[:16]
-                        path = self._usable_generation(version)
-                        if path is None:
-                            canonical = store.store_path(self.bulk_dir, version)
-                            path = (
-                                canonical
-                                if not canonical.exists()
-                                else self.bulk_dir
-                                / (f"cards-{version}-v{store.STORE_SCHEMA_VERSION}-rebuild-{uuid.uuid4().hex}.db")
-                            )
-                            self._build_store(path, version, uris, tags_uri, metadata, progress)
-                        _require_valid_store(path)
-                    except (
-                        CacheError,
-                        HttpRequestError,
-                        OSError,
-                        ValueError,
-                        KeyError,
-                        TypeError,
-                        sqlite3.Error,
-                    ) as error:
-                        fallback = self._latest_usable_generation()
-                        if fallback is None:
-                            raise
-                        warnings.warn(
-                            f"Using cached Scryfall database {fallback.name} after refresh failed: {error}",
-                            RuntimeWarning,
-                            stacklevel=2,
-                        )
-                        path = fallback
-                replacement = CardStore(path)
-                if self._store is not None:
-                    self._retired.append(self._store)
-                self._store = replacement
-                return replacement
+            replacement = CardStore(path)
+            if self._store is not None:
+                self._retired.append(self._store)
+            self._store = replacement
+            return replacement
 
-    def refresh(self, progress: ProgressCallback | None = None) -> CardStore:
+    def refresh(self) -> CardStore:
         self.metadata_cache.discard(canonical_cache_key("GET", BULK_DATA_URL))
-        return self.get_store(progress, force_refresh=True)
+        return self.get_store(force_refresh=True)
 
     def close(self) -> None:
         with self._lock:
@@ -169,6 +172,7 @@ class ScryfallBulkData:
                 parsed = _validate_bulk_metadata(cached.value)
                 if parsed is not None:
                     return parsed
+        self.progress.status("Checking Scryfall for updated bulk card data...")
         response = cast("BulkDataResponse", self.http.get_json(BULK_DATA_URL, use_cache=False))
         entries = response.get("data")
         if not isinstance(entries, list):
@@ -195,21 +199,19 @@ class ScryfallBulkData:
         self.metadata_cache.put(key, metadata)
         return metadata
 
-    def _build_store(  # noqa: PLR0913, PLR0917
+    def _build_store(
         self,
         destination: Path,
         version: str,
         card_uris: list[str],
         tags_uri: str | None,
         metadata: dict[str, BulkDataEntry],
-        progress: ProgressCallback | None,
     ) -> None:
         inputs: list[Path] = []
         for bulk_type, uri in zip(REQUIRED_BULK_TYPES, card_uris, strict=True):
-            inputs.append(self._download_input(bulk_type, uri, progress))
-        tags_path = self._download_input(ORACLE_TAGS_TYPE, tags_uri, progress) if tags_uri is not None else None
-        if progress is not None:
-            progress("Building card database...", 0, 0)
+            inputs.append(self._download_input(bulk_type, uri))
+        tags_path = self._download_input(ORACLE_TAGS_TYPE, tags_uri) if tags_uri is not None else None
+        self.progress.status("Building the local Scryfall card database (this can take a minute)...")
         updated = [str(metadata[bulk_type].get("updated_at", "")) for bulk_type in REQUIRED_BULK_TYPES]
         if tags_uri is not None:
             updated.append(str(metadata[ORACLE_TAGS_TYPE].get("updated_at", "")))
@@ -226,22 +228,22 @@ class ScryfallBulkData:
         if tags_path is not None:
             tags_path.unlink(missing_ok=True)
 
-    def _download_input(self, bulk_type: str, uri: str, progress: ProgressCallback | None) -> Path:
+    def _download_input(self, bulk_type: str, uri: str) -> Path:
         digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:16]
         destination = self.bulk_dir / f"{bulk_type}-{digest}.jsonl.gz"
         if destination.is_file() and _valid_gzip_jsonl(destination):
             return destination
         destination.unlink(missing_ok=True)
-        label = f"Downloading {bulk_type}..."
-        if progress is not None:
-            progress(label, 0, 0)
-        self.http.download_to_file(
-            uri,
-            destination,
-            timeout=120,
-            rate_limiter=None,
-            on_progress=(None if progress is None else lambda current, total: progress(label, current, total)),
-        )
+        source = urlsplit(uri).path.rsplit("/", 1)[-1] or uri
+        with self.progress.download(f"Downloading Scryfall {bulk_type}", source) as on_progress:
+            self.http.download_to_file(
+                uri,
+                destination,
+                timeout=120,
+                rate_limiter=None,
+                on_progress=on_progress,
+            )
+        self.progress.status(f"Verifying {source}...")
         if not _valid_gzip_jsonl(destination):
             destination.unlink(missing_ok=True)
             message = f"Downloaded Scryfall bulk file is corrupt: {bulk_type}"

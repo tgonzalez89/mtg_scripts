@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypedDict
 
-from mtg_scripts.services.scryfall import ScryfallService
+from mtg_scripts.services.scryfall import ScryfallService, TerminalProgressIndicator
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,7 +38,7 @@ class RankedCard(TypedDict):
 def fetch_scryfall_cards(query: str = DEFAULT_QUERY, service: ScryfallService | None = None) -> list[ScryfallCard]:
     """Fetch all cards returned by a Scryfall search query."""
     if service is None:
-        with ScryfallService() as owned_service:
+        with ScryfallService(progress=TerminalProgressIndicator()) as owned_service:
             return fetch_scryfall_cards(query, owned_service)
     result = service.search(query, order="cmc", direction="asc")
     return list(result.cards)

@@ -14,12 +14,17 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
-STORE_SCHEMA_VERSION: Final = 8
+    from .query import LocalQuery, Term
+
+STORE_SCHEMA_VERSION: Final = 9
 _BATCH_SIZE: Final = 5_000
 NAME_KIND_PRIMARY: Final = 0
 NAME_KIND_FRONT_FACE: Final = 1
 NAME_KIND_FLAVOR: Final = 2
 _TOKEN_LAYOUTS: Final = frozenset({"token", "double_faced_token"})
+# Layouts Scryfall search hides unless `include:extras` is given.
+_EXTRA_LAYOUTS: Final = ("token", "double_faced_token", "emblem", "art_series", "planar", "scheme", "vanguard")
+_COLORS: Final = "WUBRG"
 
 _SCHEMA: Final = """
 CREATE TABLE prints(
@@ -49,7 +54,9 @@ CREATE TABLE prints(
     usd_etched TEXT,
     eur TEXT,
     eur_foil TEXT,
-    tix TEXT
+    tix TEXT,
+    layout TEXT NOT NULL,
+    produced_mana TEXT NOT NULL
 );
 CREATE TABLE names(norm_name TEXT NOT NULL, print_id TEXT NOT NULL, kind INTEGER NOT NULL);
 CREATE TABLE oracle_tags(tag_slug TEXT NOT NULL, oracle_id TEXT NOT NULL,
@@ -71,7 +78,8 @@ CREATE INDEX idx_oracle_tag_children_parent ON oracle_tag_children(parent_id);
 _PRINT_COLUMNS: Final = (
     "print_id, oracle_key, name, set_code, set_name, set_type, games, collector_number, "
     "released_on, finishes, is_default, is_token, faces_json, oracle_text, color_identity, "
-    "commander_legal, type_line, mana_cost, mana_value, power, toughness, usd, usd_foil, usd_etched, eur, eur_foil, tix"
+    "commander_legal, type_line, mana_cost, mana_value, power, toughness, "
+    "usd, usd_foil, usd_etched, eur, eur_foil, tix, layout, produced_mana"
 )
 _PRICE_FIELDS: Final = ("usd", "usd_foil", "usd_etched", "eur", "eur_foil", "tix")
 _PRINT_PLACEHOLDERS: Final = ",".join("?" * len(_PRINT_COLUMNS.split(",")))
@@ -124,7 +132,7 @@ def build(  # noqa: PLR0913
     bulk_version: str = "",
     built_at: str = "",
 ) -> None:
-    """Build a complete v8 store atomically from local bulk inputs."""
+    """Build a complete current-schema store atomically from local bulk inputs."""
     default_ids = _read_oracle_ids(oracle_path)
     temporary_path = destination.with_name(f".{destination.name}.{sqlite3.sqlite_version}.tmp")
     temporary_path.unlink(missing_ok=True)
@@ -345,7 +353,7 @@ def _print_row(card: dict[str, Any], print_id: str, *, is_default: bool) -> _Pri
         int(is_default),
         int(_is_token(card)),
         json.dumps([[face.name, face.image_url, face.image_url_hq] for face in face_values]),
-        str(card.get("oracle_text", "")),
+        _oracle_text(card),
         "".join(sorted(str(color) for color in card.get("color_identity") or [])),
         int((card.get("legalities") or {}).get("commander") == "legal"),
         str(card.get("type_line", "")),
@@ -354,7 +362,17 @@ def _print_row(card: dict[str, Any], print_id: str, *, is_default: bool) -> _Pri
         _optional_text(card.get("power")),
         _optional_text(card.get("toughness")),
         *(_optional_text(prices.get(field)) for field in _PRICE_FIELDS),
+        str(card.get("layout", "")),
+        "".join(sorted({str(symbol) for symbol in card.get("produced_mana") or []})),
     )
+
+
+def _oracle_text(card: dict[str, Any]) -> str:
+    text = card.get("oracle_text")
+    if isinstance(text, str):
+        return text
+    faces = [face for face in card.get("card_faces") or [] if isinstance(face, dict)]
+    return "\n//\n".join(str(face.get("oracle_text", "")) for face in faces)
 
 
 def _optional_text(value: object) -> str | None:
@@ -438,7 +456,7 @@ def _name_rows(card: dict[str, Any], print_id: str) -> list[tuple[str, str, int]
 
 
 class CardStore:
-    """Read-only handle onto a v8 Scryfall database."""
+    """Read-only handle onto a current-schema Scryfall database."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -550,6 +568,67 @@ class CardStore:
         row = self._connection.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return None if row is None else str(row[0])
 
+    def search(self, query: LocalQuery) -> list[ScryfallCard] | None:
+        """Return every printing matching `query`, newest first, or `None` if it cannot be answered locally."""
+        placeholders = ",".join("?" for _ in _EXTRA_LAYOUTS)
+        clauses = [f"layout NOT IN ({placeholders})"]
+        params: list[object] = list(_EXTRA_LAYOUTS)
+        for term in query.terms:
+            compiled = self._compile_term(term)
+            if compiled is None:
+                return None
+            sql, args = compiled
+            clauses.append(f"NOT ({sql})" if term.negated else f"({sql})")
+            params.extend(args)
+        rows = self._connection.execute(
+            f"SELECT {_PRINT_COLUMNS} FROM prints WHERE {' AND '.join(clauses)} "  # noqa: S608
+            "ORDER BY released_on DESC, print_id",
+            params,
+        )
+        return [_row_to_card(row) for row in rows]
+
+    def _compile_term(self, term: Term) -> tuple[str, list[object]] | None:  # noqa: C901, PLR0911, PLR0912
+        # Every fragment below is a fixed template; user values only travel as bound parameters.
+        match term.field:
+            case "game":
+                return "instr(games, ?) > 0", [json.dumps(term.value)]
+            case "commander_legal":
+                return "commander_legal = 1", []
+            case "type":
+                return "instr(lower(type_line), ?) > 0", [term.value.lower()]
+            case "oracle":
+                return "instr(lower(oracle_text), ?) > 0", [term.value.lower()]
+            case "layout":
+                return "layout = ?", [term.value]
+            case "vanilla":
+                return "oracle_text = ''", []
+            case "produces":
+                return "instr(produced_mana, ?) > 0", [term.value.upper()]
+            case "produces_multicolor":
+                counted = " + ".join(f"(instr(produced_mana, '{color}') > 0)" for color in _COLORS)
+                return f"{counted} >= 2", []
+            case "identity_within":
+                excluded = [color for color in _COLORS if color.lower() not in term.value]
+                if not excluded:
+                    return "1", []
+                return " AND ".join("instr(color_identity, ?) = 0" for _ in excluded), list(excluded)
+            case "exact_name":
+                return (
+                    "print_id IN (SELECT print_id FROM names WHERE norm_name = ? AND kind IN (?, ?))",
+                    [normalize_name(term.value), NAME_KIND_PRIMARY, NAME_KIND_FRONT_FACE],
+                )
+            case "otag":
+                return self._compile_tag(term.value)
+            case _:
+                return None
+
+    def _compile_tag(self, slug: str) -> tuple[str, list[object]] | None:
+        if not self.has_oracle_tags or not self.has_complete_tag_printings(slug):
+            return None
+        slugs = self._tag_subtree_slugs(slug.removeprefix("otag:").casefold())
+        placeholders = ",".join("?" for _ in slugs)
+        return f"oracle_key IN (SELECT oracle_id FROM oracle_tags WHERE tag_slug IN ({placeholders}))", list(slugs)  # noqa: S608
+
 
 def card_from_payload(payload: dict[str, Any]) -> ScryfallCard:
     print_id = str(payload.get("id", ""))
@@ -586,7 +665,9 @@ def _row_to_card(row: Sequence[object]) -> ScryfallCard:
         mana_value=None if row[18] is None else float(str(row[18])),
         power=_optional_text(row[19]),
         toughness=_optional_text(row[20]),
-        prices={field: _optional_text(value) for field, value in zip(_PRICE_FIELDS, row[21:], strict=True)},
+        prices={field: _optional_text(value) for field, value in zip(_PRICE_FIELDS, row[21:27], strict=True)},
+        layout=str(row[27]),
+        produced_mana=frozenset(str(row[28])),
     )
 
 

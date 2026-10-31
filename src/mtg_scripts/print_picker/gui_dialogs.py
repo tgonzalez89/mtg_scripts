@@ -90,29 +90,3 @@ class DownloadImagesDialog(tk.Toplevel):
     def _confirm(self) -> None:
         self.result = self.unique_images.get()
         self.destroy()
-
-
-class ProgressDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc, title: str) -> None:
-        super().__init__(master)
-        self.title(title)
-        self.resizable(width=False, height=False)
-        self.transient(cast("tk.Tk", master))
-        self.status_label = ttk.Label(self, text="Starting...")
-        self.status_label.pack(padx=20, pady=(18, 8))
-        self.progress_bar = ttk.Progressbar(self, mode="indeterminate", length=320)
-        self.progress_bar.pack(padx=20, pady=(0, 18))
-        self.progress_bar.start(10)
-        self.protocol("WM_DELETE_WINDOW", lambda: None)
-        self.update_idletasks()
-
-    def update_progress(self, message: str, current: int, total: int) -> None:
-        self.status_label.configure(text=message)
-        if total > 0:
-            if self.progress_bar.cget("mode") != "determinate":
-                self.progress_bar.stop()
-                self.progress_bar.configure(mode="determinate")
-            self.progress_bar.configure(maximum=total, value=current)
-        elif self.progress_bar.cget("mode") != "indeterminate":
-            self.progress_bar.configure(mode="indeterminate")
-            self.progress_bar.start(10)
