@@ -58,6 +58,7 @@ dev = [
 # ---------------------------------------------------------------------------
 
 [project.scripts]
+mtg_scripts = "mtg_scripts.cli:mtg_scripts"
 build_base_deck = "mtg_scripts.cli:build_base_deck"
 calculate_to_purchase = "mtg_scripts.cli:calculate_to_purchase"
 cardmarket_optimizer = "mtg_scripts.cli:cardmarket_optimizer"

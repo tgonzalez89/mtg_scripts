@@ -21,6 +21,11 @@ def _run(module_name: str, argv: Sequence[str] | None = None) -> int:
     return status
 
 
+def mtg_scripts(argv: Sequence[str] | None = None) -> int:
+    """List every mtg-scripts command."""
+    return _run("mtg_scripts.commands", argv)
+
+
 def build_base_deck(argv: Sequence[str] | None = None) -> int:
     """Run the base-deck builder."""
     return _run("mtg_scripts.build_base_deck.build_base_deck", argv)

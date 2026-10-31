@@ -20,17 +20,13 @@ uv run pre-commit install --install-hooks
 
 ## Available commands
 
-The project scripts are declared in [`pyproject.toml`](pyproject.toml). The available commands are listed here:
+Run `uv run mtg_scripts` to list every installed command with a one-line description.
 
-**Command-line tools:** `build_base_deck`, `calculate_to_purchase`, `cardmarket_optimizer`, `cardmarket_scraper`, `shopping_wizard_optimizer`, `gen_dummy_test_files`, `cardtrader_optimizer`, `deck_exporter`, `forge_auto_battler`, `mana_base_creator`, `mana_base_recipe`, `count_occurrences`, `filter_list`, `make_mtg_table`, and `vanilla`.
-
-**Graphical application:** `print_picker`.
-
-Run a command with `uv run <command> [args...]`; add `--help` to see its options. Launch Print Picker with `uv run print_picker`.
+Run a command with `uv run <command> [args...]`. Add `--help` to see its options.
 
 ## Forge OCR
 
-Forge automation requires a local Forge installation and Tesseract OCR data. Download the data from [tesseract-ocr/tessdata](https://github.com/tesseract-ocr/tessdata). Set `MTG_SCRIPTS_TESSDATA_DIR` to its directory or pass `--tessdata-dir PATH` to the Forge command.
+Forge automation requires a local Forge installation and Tesseract OCR data. Download the data from [tesseract-ocr/tessdata](https://github.com/tesseract-ocr/tessdata). Set `MTG_SCRIPTS_TESSDATA_DIR` to its directory or pass `--tessdata-dir <path>` to the Forge automation command.
 
 ## Tests
 
