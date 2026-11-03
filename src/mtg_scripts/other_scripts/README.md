@@ -1,1 +1,3 @@
 Contains small utilities for card lists, card lookup, and document generation. Run each command with `--help` for options.
+
+`theoretical_premodern` compares unique cards in the Premodern sets and older bordered sets, then writes three plain-text card-name lists to `theoretical_premodern_results` by default: intermediate additions, proposed new bans, and the final pool. The proposed-ban list filters current Legacy and Vintage bans, Vintage-restricted cards and the dual lands. Add card names to `MANUALLY_BANNED_CARDS` in the script to ban them independently of format legality. Use `--output-dir` to choose another destination.

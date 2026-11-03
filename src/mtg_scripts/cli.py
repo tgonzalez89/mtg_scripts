@@ -101,6 +101,11 @@ def vanilla(argv: Sequence[str] | None = None) -> int:
     return _run("mtg_scripts.other_scripts.vanilla", argv)
 
 
+def theoretical_premodern(argv: Sequence[str] | None = None) -> int:
+    """Compare older bordered sets with the Premodern card pool."""
+    return _run("mtg_scripts.other_scripts.theoretical_premodern", argv)
+
+
 def print_picker(argv: Sequence[str] | None = None) -> int:
     """Run the graphical print picker."""
     return _run("mtg_scripts.print_picker.print_picker", argv)
